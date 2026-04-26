@@ -1,112 +1,182 @@
-# Virtual Queue FastAPI Example
+# Virtual Queue
 
-This project provides a modular FastAPI application with Postgres integration, SQLAlchemy ORM, JWT authentication, email activation via Resend, role-based access control, and Docker orchestration.
+A scalable virtual queue management system with real-time notifications, built with FastAPI, React, WebSocket, and Redis.
 
 ## Features
 
-- **User Registration** (Admin only) - Create users with name, lastname, username, email, and role
-- **Email Activation** - Users receive activation email to set their password (via Resend)
-- **JWT Authentication** - Secure login with JSON Web Tokens
-- **Role-Based Access** - Three roles: ADMIN, OWNER, STAFF with different dashboard views
-- **Role-Based Dashboard** - Different content displayed based on user role
+- 🔐 **JWT Authentication** - Secure login with role-based access (ADMIN, OWNER, STAFF)
+- 📧 **Email Activation** - User registration with email verification via Resend
+- 📱 **Mobile-First PWA** - Responsive design optimized for mobile devices
+- 🔔 **Real-time Notifications** - Instant announcements via WebSocket
+- 📊 **Role-based Dashboards** - Different views for Admin, Owner, and Staff
+- 🚀 **Scalable Architecture** - Redis Pub/Sub for scaling to 1000+ concurrent users per queue
+- 🔒 **HTTPS Ready** - Let's Encrypt SSL certificate support
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    NGINX (Port 443/80)                      │
+│              - HTTPS (Let's Encrypt)                        │
+│              - WebSocket proxy                              │
+│              - Load balancing                               │
+├─────────────────────────────────────────────────────────────┤
+│    /api/*   →  FastAPI                                      │
+│    /ws/*    →  WebSocket                                    │
+│    /*       →  React PWA                                    │
+└─────────────────────────────────────────────────────────────┘
+         │                              │
+         ▼                              ▼
+┌─────────────────┐           ┌─────────────────┐
+│   FastAPI API   │           │   React PWA     │
+│  + WebSocket    │           │ + Notifications │
+└────────┬────────┘           └─────────────────┘
+         │
+    ┌────┴────┐
+    ▼         ▼
+┌───────┐  ┌───────┐
+│ Redis │  │Postgres│
+│Pub/Sub│  │  DB   │
+└───────┘  └───────┘
+```
 
 ## Quick Start
 
-### 1. Start the database
-```sh
-docker compose up db -d
+### Development (Local)
+
+1. **Start database and Redis**
+   ```bash
+   docker compose up db redis -d
+   ```
+
+2. **Install backend dependencies**
+   ```bash
+   uv venv
+   source .venv/bin/activate
+   uv pip install -r pyproject.toml
+   ```
+
+3. **Create admin user** (first time only)
+   ```bash
+   python scripts/create_admin.py
+   ```
+
+4. **Run backend**
+   ```bash
+   uvicorn app.main:app --reload
+   ```
+
+5. **Install frontend dependencies** (in new terminal)
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+
+6. **Access the app**
+   - Frontend: http://localhost:3000
+   - API Docs: http://localhost:8000/docs
+   - Default login: `admin` / `admin123`
+
+### Development (Docker)
+
+```bash
+# Start all services
+docker compose up --build
+
+# Access at http://localhost:8000
 ```
 
-### 2. Install dependencies
-```sh
-uv venv
-source .venv/bin/activate
-uv pip install -r pyproject.toml
-```
+### Production with HTTPS
 
-### 3. Update database schema (if upgrading)
-```sh
-python scripts/update_schema.py
-```
+1. **Configure environment**
+   ```bash
+   cp .env.example .env
+   # Edit .env with production values
+   ```
 
-### 4. Create initial admin user
-```sh
-python scripts/create_admin.py
-```
+2. **Get SSL certificate**
+   ```bash
+   # First, update nginx.conf with your domain
+   # Then run certbot
+   docker compose -f docker-compose.prod.yml run --rm certbot certonly \
+     --webroot --webroot-path=/var/www/certbot \
+     -d yourdomain.com
+   ```
 
-### 5. Run the application
-```sh
-uvicorn app.main:app --reload
-```
-
-### 6. Access the application
-- **API Docs**: http://localhost:8000/docs
-- **Login Page**: http://localhost:8000/auth/login-page
-- **Dashboard**: http://localhost:8000/dashboard
-
-**Default Admin Credentials:**
-- Username: `admin`
-- Password: `admin123`
+3. **Start production stack**
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d
+   ```
 
 ## API Endpoints
 
 ### Authentication
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| POST | `/auth/register` | Register new user | JWT + ADMIN role |
-| GET | `/auth/activate?token=xxx` | Show password form | None |
-| POST | `/auth/activate` | Set password & activate | None |
-| GET | `/auth/login-page` | Login form (HTML) | None |
-| POST | `/auth/login` | Get JWT token | None |
-| GET | `/auth/me` | Current user info | JWT |
 
-### Dashboard
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| GET | `/dashboard` | Role-based dashboard | JWT |
-| GET | `/dashboard/admin-only` | Admin-only endpoint | JWT + ADMIN |
-| GET | `/dashboard/owner-staff` | Owner/Staff endpoint | JWT + OWNER/STAFF |
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | `/auth/register` | Registration form | ❌ |
+| POST | `/auth/register` | Public registration | ❌ |
+| POST | `/auth/register-admin` | Admin creates user | ✅ ADMIN |
+| GET | `/auth/activate?token=xxx` | Activation form | ❌ |
+| POST | `/auth/activate` | Set password | ❌ |
+| GET | `/auth/login-page` | Login form | ❌ |
+| POST | `/auth/login` | Get JWT token | ❌ |
+| GET | `/auth/me` | Current user info | ✅ |
 
-## Usage Scenarios
+### WebSocket
 
-### 1. Everything Local (for quick development only)
+| Endpoint | Description | Auth |
+|----------|-------------|------|
+| `/ws/notify?token=JWT&queue_id=ID` | Customer notifications | Optional |
+| `/ws/staff?token=JWT` | Staff announcements | ✅ STAFF+ |
 
-```sh
-uv venv
-source .venv/bin/activate
-uv pip install -r pyproject.toml
-uvicorn app.main:app --reload
+### WebSocket Messages
+
+**Receive (Customer):**
+```json
+{"type": "announcement", "message": "Come to counter 3"}
+{"type": "your_turn", "message": "It's your turn!", "sound": true}
+{"type": "position_update", "position": 5}
 ```
 
-### 2. Everything in Docker (recommended for production)
-
-```sh
-docker compose up --build
-```
-- The API will be available at http://localhost:8000
-- The Postgres database will be available at localhost:5432
-
-### 3. App Local, Postgres in Docker (hybrid development)
-
-1. Start only the database in Docker:
-   ```sh
-   docker compose up db
-   ```
-2. In another terminal, run the app locally:
-   ```sh
-   uvicorn app.main:app --reload
-   ```
-- **Important:** Your `.env` must have `POSTGRES_HOST=localhost`
-
-## Testing
-
-```sh
-pytest -v
+**Send (Staff):**
+```json
+{"type": "announce", "queue_id": "q1", "message": "Bar closing soon"}
+{"type": "call_customer", "customer_id": 123, "message": "Counter 3"}
 ```
 
-## Configuration
+## Project Structure
 
-All configuration variables are in `.env`:
+```
+virtual_queue/
+├── app/                          # FastAPI Backend
+│   ├── main.py                   # Application entry
+│   ├── database.py               # SQLAlchemy setup
+│   ├── models/                   # Database models
+│   ├── schemas/                  # Pydantic schemas
+│   ├── services/                 # Business logic
+│   ├── routers/                  # API routes
+│   └── websocket/                # WebSocket handlers
+│       ├── manager.py            # Connection manager
+│       ├── redis_pubsub.py       # Redis pub/sub
+│       └── handlers.py           # WS endpoints
+├── frontend/                     # React PWA
+│   ├── src/
+│   │   ├── pages/                # Page components
+│   │   ├── components/           # UI components
+│   │   ├── hooks/                # Custom hooks
+│   │   ├── services/             # API & WebSocket
+│   │   └── store/                # Zustand state
+│   └── Dockerfile
+├── nginx/                        # Nginx config
+├── scripts/                      # Utility scripts
+├── docker-compose.yml            # Development
+├── docker-compose.prod.yml       # Production
+└── README.md
+```
+
+## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -115,30 +185,42 @@ All configuration variables are in `.env`:
 | `POSTGRES_USER` | Database user | `postgres` |
 | `POSTGRES_PASSWORD` | Database password | `postgres` |
 | `POSTGRES_DB` | Database name | `virtual_queue` |
-| `JWT_SECRET_KEY` | Secret key for JWT tokens | (change in production!) |
-| `RESENDER_API_KEY` | Resend API key for emails | (required for activation emails) |
-| `APP_BASE_URL` | Base URL for activation links | `http://localhost:8000` |
+| `REDIS_URL` | Redis connection URL | `redis://localhost:6379` |
+| `JWT_SECRET_KEY` | JWT signing key | ⚠️ Change in production! |
+| `RESENDER_API_KEY` | Resend API key | Required for emails |
+| `APP_BASE_URL` | Application URL | `http://localhost:8000` |
+| `FRONTEND_URL` | Frontend URL | `http://localhost:3000` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 
-## Project Structure
+## Scaling
 
+The application is designed to scale:
+
+- **Redis Pub/Sub** enables horizontal scaling of API instances
+- **1000+ customers per queue** supported with batched notifications
+- **WebSocket connections** managed per-instance with Redis coordination
+- **Nginx load balancing** distributes traffic across API replicas
+
+```bash
+# Scale API to 3 instances
+docker compose -f docker-compose.prod.yml up -d --scale api=3
 ```
-app/
-├── main.py              # FastAPI application entry point
-├── database.py          # SQLAlchemy setup and DB connection
-├── models/
-│   └── user.py          # User model with roles and password hashing
-├── schemas/
-│   └── auth.py          # Pydantic schemas for auth endpoints
-├── services/
-│   ├── auth_service.py  # JWT token handling and dependencies
-│   └── email_service.py # Email sending via Resend
-└── routers/
-    ├── auth.py          # Authentication endpoints
-    └── dashboard.py     # Role-based dashboard
-scripts/
-├── create_admin.py      # Create initial admin user
-└── update_schema.py     # Update database schema
-tests/
-└── test_main.py         # API tests
+
+## Testing
+
+```bash
+# Run tests
+pytest -v
+
+# Run with coverage
+pytest --cov=app
 ```
+
+## Commit History
+
+- `feat: add React PWA frontend with real-time WebSocket notifications`
+- `feat: add Redis Pub/Sub for scalable messaging`
+- `feat: add Nginx reverse proxy with HTTPS support`
+- `feat: add user registration, email activation, JWT login, role-based dashboard`
+- `feat: initialize modular FastAPI app with uv, .env, logging, and tests`
+
