@@ -5,8 +5,18 @@ description = "Modular FastAPI app with uv, .env, logging, and tests"
 requires-python = ">=3.10"
 dependencies = [
   "fastapi",
-  "uvicorn",
-  "python-dotenv"
+  "uvicorn[standard]",
+  "python-dotenv",
+  "sqlalchemy",
+  "psycopg2-binary",
+  "bcrypt",
+  "resend",
+  "python-jose[cryptography]",
+  "passlib[bcrypt]",
+  "python-multipart",
+  "email-validator",
+  "redis",
+  "websockets"
 ]
 
 [project.optional-dependencies]
@@ -21,3 +31,4 @@ test = [
 [build-system]
 requires = ["uv"]
 build-backend = "uv.build"
+
