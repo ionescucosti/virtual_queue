@@ -9,7 +9,12 @@ dependencies = [
   "python-dotenv",
   "sqlalchemy",
   "psycopg2-binary",
-  "bcrypt"
+  "bcrypt",
+  "resend",
+  "python-jose[cryptography]",
+  "passlib[bcrypt]",
+  "python-multipart",
+  "email-validator"
 ]
 
 [project.optional-dependencies]

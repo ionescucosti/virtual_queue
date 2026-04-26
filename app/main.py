@@ -1,8 +1,9 @@
 import logging
 import os
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from dotenv import load_dotenv
-from app.routers import hello
+from app.routers import auth, dashboard
 from app.database import engine
 from app.models.user import Base
 
@@ -21,6 +22,14 @@ logger.info("Starting application with log level: %s", log_level)
 # Create tables if not exist
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI()
-app.include_router(hello.router)
+app = FastAPI(title="Virtual Queue API", version="1.0.0")
+
+@app.get("/")
+def root():
+    """Redirect to login page."""
+    return RedirectResponse(url="/auth/login-page")
+
+# Include routers
+app.include_router(auth.router)
+app.include_router(dashboard.router)
 
