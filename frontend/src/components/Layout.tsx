@@ -14,7 +14,7 @@ export function Layout({ children }: LayoutProps) {
 
   const roleColors = {
     ADMIN: 'bg-red-500',
-    OWNER: 'bg-blue-500',
+    MANAGER: 'bg-blue-500',
     STAFF: 'bg-green-500',
   }
 
@@ -26,11 +26,18 @@ export function Layout({ children }: LayoutProps) {
       <header className="bg-white shadow-sm sticky top-0 z-40 safe-top">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <Link to="/dashboard" className="flex items-center gap-2">
-            <span className="text-2xl">🎫</span>
-            <span className="font-bold text-gray-900 hidden sm:inline">Virtual Queue</span>
+            <span className="font-bold text-gray-900">Virtual Queue</span>
           </Link>
 
           <div className="flex items-center gap-4">
+            {user?.role === 'ADMIN' && (
+              <Link
+                to="/dashboard/analytics"
+                className="text-sm text-gray-600 hover:text-blue-600 font-medium transition-colors hidden sm:block"
+              >
+                Analytics
+              </Link>
+            )}
             {/* Connection status */}
             <div className="flex items-center gap-1">
               <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
@@ -98,8 +105,7 @@ export function AuthLayout({ children }: LayoutProps) {
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <span className="text-6xl">🎫</span>
-          <h1 className="text-3xl font-bold text-white mt-4">Virtual Queue</h1>
+          <h1 className="text-3xl font-bold text-white">Virtual Queue</h1>
           <p className="text-blue-200 mt-2">Queue management made simple</p>
         </div>
         {children}

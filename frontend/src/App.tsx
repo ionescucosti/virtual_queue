@@ -1,8 +1,25 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import { useAuthStore } from './store'
+import { wsService } from './services/websocket'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
+import { ActivatePage } from './pages/ActivatePage'
 import { DashboardPage } from './pages/DashboardPage'
+import { BusinessDetailPage } from './pages/BusinessDetailPage'
+import { AnalyticsPage } from './pages/AnalyticsPage'
+
+function WebSocketManager() {
+  const { isAuthenticated } = useAuthStore()
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      wsService.connect()
+    }
+  }, [isAuthenticated])
+
+  return null
+}
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -27,6 +44,7 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <BrowserRouter>
+      <WebSocketManager />
       <Routes>
         {/* Public routes */}
         <Route
@@ -45,6 +63,14 @@ export default function App() {
             </PublicRoute>
           }
         />
+        <Route
+          path="/activate"
+          element={
+            <PublicRoute>
+              <ActivatePage />
+            </PublicRoute>
+          }
+        />
 
         {/* Protected routes */}
         <Route
@@ -52,6 +78,22 @@ export default function App() {
           element={
             <PrivateRoute>
               <DashboardPage />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/dashboard/business/:id"
+          element={
+            <PrivateRoute>
+              <BusinessDetailPage />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/dashboard/analytics"
+          element={
+            <PrivateRoute>
+              <AnalyticsPage />
             </PrivateRoute>
           }
         />

@@ -5,11 +5,15 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from app.routers import auth, dashboard
+from app.routers import auth, dashboard, business, queue
 from app.websocket.handlers import router as ws_router
 from app.websocket.redis_pubsub import redis_pubsub
 from app.database import engine
 from app.models.user import Base
+from app.models.business import Business       # noqa: F401
+from app.models.queue import Queue             # noqa: F401
+from app.models.queue_session import QueueSession  # noqa: F401
+from app.models.queue_entry import QueueEntry      # noqa: F401
 
 # Load environment variables from .env file
 load_dotenv()
@@ -69,5 +73,7 @@ def health_check():
 # Include routers
 app.include_router(auth.router)
 app.include_router(dashboard.router)
+app.include_router(business.router)
+app.include_router(queue.router)
 app.include_router(ws_router)
 
