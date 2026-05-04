@@ -11,7 +11,7 @@ from app.models.business import Business
 from app.models.queue import Queue
 from app.models.queue_session import QueueSession
 from app.models.queue_entry import QueueEntry, EntryStatus
-from app.services.auth_service import get_db, require_role
+from app.services.auth_service import get_db, require_role, get_current_user
 from app.websocket.manager import manager
 
 router = APIRouter(prefix="/api/businesses", tags=["Queues"])
@@ -102,14 +102,33 @@ def _next_position(db: Session, session_id: int) -> int:
     return (max_pos or 0) + 1
 
 
+def _check_business_access(current_user: User, business_id: int):
+    """Helper to check if user can access the business."""
+    from fastapi import HTTPException, status
+
+    # Admin users can access any business
+    if current_user.role == UserRole.ADMIN:
+        return
+
+    # MANAGER/STAFF users can only access their assigned business
+    if current_user.business_id != business_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your assigned business"
+        )
+
+
 # ── Queue CRUD ────────────────────────────────────────────────────────────────
 
 @router.get("/{business_id}/queues", response_model=List[QueueResponse])
 def list_queues(
     business_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN))
+    current_user: User = Depends(get_current_user)
 ):
+    """List queues for a business (Admin can access any, MANAGER/STAFF only their assigned business)."""
+    _check_business_access(current_user, business_id)
+
     business = db.query(Business).filter(Business.id == business_id).first()
     if not business:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
@@ -121,8 +140,11 @@ def create_queue(
     business_id: int,
     queue_data: QueueCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN))
+    current_user: User = Depends(get_current_user)
 ):
+    """Create a queue for a business (Admin can access any, MANAGER only their assigned business)."""
+    _check_business_access(current_user, business_id)
+
     business = db.query(Business).filter(Business.id == business_id).first()
     if not business:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
@@ -140,13 +162,16 @@ def create_queue(
 
 
 @router.put("/{business_id}/queues/{queue_id}", response_model=QueueResponse)
-def update_queue(
+async def update_queue(
     business_id: int,
     queue_id: int,
     queue_data: QueueUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN))
+    current_user: User = Depends(get_current_user)
 ):
+    """Update a queue (Admin can access any, MANAGER only their assigned business)."""
+    _check_business_access(current_user, business_id)
+
     queue = db.query(Queue).filter(Queue.id == queue_id, Queue.business_id == business_id).first()
     if not queue:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue not found")
@@ -158,6 +183,14 @@ def update_queue(
 
     db.commit()
     db.refresh(queue)
+
+    await manager.broadcast({
+        "type": "queue_updated",
+        "queue_id": queue.id,
+        "name": queue.name,
+        "max_bar_capacity": queue.max_bar_capacity,
+    })
+
     return queue
 
 
@@ -168,8 +201,11 @@ async def toggle_queue_status(
     business_id: int,
     queue_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN))
+    current_user: User = Depends(get_current_user)
 ):
+    """Toggle queue status (Admin can access any, MANAGER only their assigned business)."""
+    _check_business_access(current_user, business_id)
+
     queue = db.query(Queue).filter(Queue.id == queue_id, Queue.business_id == business_id).first()
     if not queue:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue not found")
@@ -210,10 +246,10 @@ async def update_waiting(
     queue_id: int,
     body: WaitingUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN))
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Track customer lifecycle inside a queue.
+    Track customer lifecycle inside a queue (Admin can access any, MANAGER/STAFF only their assigned business).
 
     - join:  creates a QueueEntry, returns position + entry_id
     - call:  moves entry to AT_BAR (customer called to the physical counter)
@@ -223,6 +259,8 @@ async def update_waiting(
     customer_token is a client-generated UUID (stored in browser localStorage).
     It is hashed server-side before storage — no personal data is kept (GDPR).
     """
+    _check_business_access(current_user, business_id)
+
     queue = db.query(Queue).filter(Queue.id == queue_id, Queue.business_id == business_id).first()
     if not queue:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue not found")
@@ -279,7 +317,43 @@ async def update_waiting(
         "current_waiting": queue.current_waiting,
     })
 
+    await manager.broadcast({
+        "type": "queue_entries_changed",
+        "queue_id": queue.id,
+    })
+
     return entry
+
+
+# ── Active entries (for staff dashboard) ─────────────────────────────────────
+
+@router.get("/{business_id}/queues/{queue_id}/entries", response_model=List[EntryResponse])
+def list_queue_entries(
+    business_id: int,
+    queue_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List current WAITING and AT_BAR entries for a queue."""
+    _check_business_access(current_user, business_id)
+
+    queue = db.query(Queue).filter(Queue.id == queue_id, Queue.business_id == business_id).first()
+    if not queue:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue not found")
+
+    today = date.today()
+    session = db.query(QueueSession).filter(
+        QueueSession.queue_id == queue_id,
+        QueueSession.date == today
+    ).first()
+
+    if not session:
+        return []
+
+    return db.query(QueueEntry).filter(
+        QueueEntry.session_id == session.id,
+        QueueEntry.status.in_([EntryStatus.WAITING, EntryStatus.AT_BAR])
+    ).order_by(QueueEntry.position).all()
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
@@ -289,16 +363,18 @@ def get_queue_analytics(
     business_id: int,
     queue_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN))
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Returns per-day session stats for a queue:
+    Returns per-day session stats for a queue (Admin can access any, MANAGER only their assigned business):
     - total customers joined
     - served / abandoned counts
     - avg wait-to-bar time (minutes)
     - peak hour
     - repeat visitor count (same token seen on multiple days)
     """
+    _check_business_access(current_user, business_id)
+    
     queue = db.query(Queue).filter(Queue.id == queue_id, Queue.business_id == business_id).first()
     if not queue:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue not found")

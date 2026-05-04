@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useParams, useNavigate, Link, Navigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useWebSocket } from '../hooks/useWebSocket'
 import { Layout } from '../components/Layout'
 import { apiHelpers } from '../services/api'
 import { useWebSocketStore } from '../store'
@@ -29,7 +30,9 @@ interface BusinessUser {
   email: string
   role: string
   is_active: boolean
+  assigned_queue_id?: number | null
 }
+
 
 type EditUserForm = {
   name: string
@@ -87,8 +90,13 @@ export function BusinessDetailPage() {
   const [editUserError, setEditUserError] = useState('')
   const [hoveredUserId, setHoveredUserId] = useState<number | null>(null)
 
+  useWebSocket(undefined, true)
+
   const isAdmin = user?.role === 'ADMIN'
-  const { queueCounts, queueStatuses } = useWebSocketStore()
+  const isManager = user?.role === 'MANAGER'
+  const isStaff = user?.role === 'STAFF'
+  const canManageQueues = isAdmin || isManager
+  const { queueCounts, queueStatuses, queuePatches } = useWebSocketStore()
 
   const isEditUserDirty =
     editUserForm.name !== originalEditForm.name ||
@@ -129,10 +137,12 @@ export function BusinessDetailPage() {
     setEditBusinessError('')
   }
 
-  const isBusinessDirty =
-    businessForm.name !== originalBusinessForm.name ||
-    businessForm.address !== originalBusinessForm.address ||
-    businessForm.phone !== originalBusinessForm.phone
+  const isBusinessDirty = isAdmin
+    ? (businessForm.name !== originalBusinessForm.name ||
+       businessForm.address !== originalBusinessForm.address ||
+       businessForm.phone !== originalBusinessForm.phone)
+    : (businessForm.address !== originalBusinessForm.address ||
+       businessForm.phone !== originalBusinessForm.phone)
 
   const handleSaveBusiness = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -305,6 +315,19 @@ export function BusinessDetailPage() {
     }
   }
 
+  const handleAssignQueue = async (userId: number, queueId: number | null) => {
+    try {
+      const updated = await apiHelpers.patch(
+        `/api/businesses/${id}/users/${userId}/queue-assignment`,
+        { queue_id: queueId }
+      )
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, assigned_queue_id: updated.assigned_queue_id } : u))
+    } catch (error) {
+      console.error('Error assigning queue:', error)
+      alert('Error assigning queue')
+    }
+  }
+
   if (isLoading) {
     return (
       <Layout>
@@ -322,12 +345,31 @@ export function BusinessDetailPage() {
           <div className="bg-red-50 border border-red-200 text-red-600 p-4 rounded-lg">
             {error || 'Business not found'}
           </div>
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="mt-4 text-blue-600 hover:underline"
-          >
-            ← Back to Dashboard
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="mt-4 text-blue-600 hover:underline"
+            >
+              ← Back to Dashboard
+            </button>
+          )}
+        </div>
+      </Layout>
+    )
+  }
+
+  if (isStaff) {
+    if (user?.assigned_queue_id) {
+      return <Navigate to={`/dashboard/business/${id}/queue/${user.assigned_queue_id}`} replace />
+    }
+    return (
+      <Layout>
+        <div className="max-w-md mx-auto px-4 py-24 text-center">
+          <div className="bg-white rounded-xl shadow-sm p-10">
+            <p className="text-4xl mb-4">⏳</p>
+            <h2 className="text-xl font-bold text-gray-800 mb-2">No queue assigned yet</h2>
+            <p className="text-gray-500 text-sm">Contact your manager to get assigned to a queue.</p>
+          </div>
         </div>
       </Layout>
     )
@@ -337,33 +379,46 @@ export function BusinessDetailPage() {
     <Layout>
       <div className="max-w-4xl mx-auto px-4 py-6">
         {/* Back button */}
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="mb-4 text-blue-600 hover:underline flex items-center gap-1"
-        >
-          ← Back to Dashboard
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="mb-4 text-blue-600 hover:underline flex items-center gap-1"
+          >
+            ← Back to Dashboard
+          </button>
+        )}
 
-        {/* Business Details Card */}
+        {/* Business Details + QR Code — single card, two columns */}
         <div
-          className={`bg-white rounded-xl shadow-sm p-6 ${isAdmin ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
-          onClick={() => isAdmin && openEditBusiness()}
+          className={`bg-white rounded-xl shadow-sm p-6 ${(isAdmin || isManager) ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+          onClick={() => (isAdmin || isManager) && openEditBusiness()}
         >
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold text-gray-900">{business.name}</h1>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-500 mb-1">Name</p>
-              <p className="text-lg font-medium text-gray-900">{business.name}</p>
+          <div className="flex flex-col sm:flex-row gap-6">
+            {/* Left: name + detail fields */}
+            <div className="flex-1 min-w-0">
+              <h1 className="text-2xl font-bold text-gray-900 mb-4">{business.name}</h1>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400 w-14 shrink-0">Name</span>
+                  <span className="text-sm font-medium text-gray-800 truncate">{business.name}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400 w-14 shrink-0">Phone</span>
+                  <span className="text-sm font-medium text-gray-800">{business.phone}</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs text-gray-400 w-14 shrink-0 pt-0.5">Address</span>
+                  <span className="text-sm font-medium text-gray-800">{business.address}</span>
+                </div>
+              </div>
             </div>
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-500 mb-1">Phone</p>
-              <p className="text-lg font-medium text-gray-900">{business.phone}</p>
-            </div>
-            <div className="bg-gray-50 p-4 rounded-lg md:col-span-2">
-              <p className="text-sm text-gray-500 mb-1">Address</p>
-              <p className="text-lg font-medium text-gray-900">{business.address}</p>
+
+            {/* Divider */}
+            <div className="hidden sm:block w-px bg-gray-100 self-stretch" />
+
+            {/* Right: QR code */}
+            <div onClick={(e) => e.stopPropagation()}>
+              <QRCodeCard businessId={id!} businessName={business.name} />
             </div>
           </div>
         </div>
@@ -375,7 +430,7 @@ export function BusinessDetailPage() {
               <h2 className="text-lg font-bold text-gray-900">Users</h2>
               <p className="text-gray-500 text-sm">Managers and staff assigned to this business.</p>
             </div>
-            {isAdmin && !showUserForm && (
+            {(isAdmin || isManager) && !showUserForm && (
               <button
                 onClick={() => setShowUserForm(true)}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -386,7 +441,7 @@ export function BusinessDetailPage() {
           </div>
 
           {/* Create User Form */}
-          {showUserForm && isAdmin && (
+          {showUserForm && (isAdmin || isManager) && (
             <div className="mb-6 p-4 bg-gray-50 rounded-lg">
               <h4 className="font-bold mb-4">Create New User</h4>
 
@@ -445,18 +500,20 @@ export function BusinessDetailPage() {
                     required
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                  <select
-                    value={userFormData.role}
-                    onChange={(e) => setUserFormData({ ...userFormData, role: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                    required
-                  >
-                    <option value="MANAGER">Manager</option>
-                    <option value="STAFF">Staff</option>
-                  </select>
-                </div>
+                {isAdmin && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                    <select
+                      value={userFormData.role}
+                      onChange={(e) => setUserFormData({ ...userFormData, role: e.target.value })}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                      required
+                    >
+                      <option value="MANAGER">Manager</option>
+                      <option value="STAFF">Staff</option>
+                    </select>
+                  </div>
+                )}
                 <div className="flex gap-2 pt-2">
                   <button
                     type="submit"
@@ -480,8 +537,8 @@ export function BusinessDetailPage() {
           {users.length === 0 ? (
             <div className="text-gray-500 text-center py-8 bg-gray-50 rounded-lg">
               <p>No users assigned to this business yet.</p>
-              {isAdmin && (
-                <p className="text-sm mt-2">Click "Create User" to add managers or staff.</p>
+              {(isAdmin || isManager) && (
+                <p className="text-sm mt-2">Click "Create User" to add {isAdmin ? 'managers or ' : ''}staff.</p>
               )}
             </div>
           ) : (
@@ -493,6 +550,7 @@ export function BusinessDetailPage() {
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Username</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Email</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Role</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Assigned Queue</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Status</th>
                     {isAdmin && <th className="px-4 py-3"></th>}
                   </tr>
@@ -515,6 +573,28 @@ export function BusinessDetailPage() {
                         }`}>
                           {u.role}
                         </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm" onClick={(e) => e.stopPropagation()}>
+                        {u.role === 'STAFF' ? (
+                          canManageQueues ? (
+                            <select
+                              value={u.assigned_queue_id ?? ''}
+                              onChange={(e) => handleAssignQueue(u.id, e.target.value ? Number(e.target.value) : null)}
+                              className="px-2 py-1 text-xs border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 outline-none bg-white"
+                            >
+                              <option value="">Unassigned</option>
+                              {queues.map(q => (
+                                <option key={q.id} value={q.id}>{q.name}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="text-gray-500 text-xs">
+                              {queues.find(q => q.id === u.assigned_queue_id)?.name ?? 'Unassigned'}
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-gray-400 text-xs">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 text-xs rounded-full ${
@@ -550,7 +630,7 @@ export function BusinessDetailPage() {
               <h2 className="text-lg font-bold text-gray-900">Queues</h2>
               <p className="text-gray-500 text-sm">Queues configured for this business.</p>
             </div>
-            {isAdmin && !showQueueForm && (
+            {canManageQueues && !showQueueForm && (
               <button
                 onClick={() => setShowQueueForm(true)}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -561,7 +641,7 @@ export function BusinessDetailPage() {
           </div>
 
           {/* Create Queue Form */}
-          {showQueueForm && isAdmin && (
+          {showQueueForm && canManageQueues && (
             <div className="mb-6 p-4 bg-gray-50 rounded-lg">
               <h4 className="font-bold mb-4">Create New Queue</h4>
               {queueFormError && (
@@ -619,7 +699,7 @@ export function BusinessDetailPage() {
           {queues.length === 0 ? (
             <div className="text-gray-500 text-center py-8 bg-gray-50 rounded-lg">
               <p>No queues configured for this business yet.</p>
-              {isAdmin && <p className="text-sm mt-2">Click "Create Queue" to add one.</p>}
+              {canManageQueues && <p className="text-sm mt-2">Click "Create Queue" to add one.</p>}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -630,31 +710,32 @@ export function BusinessDetailPage() {
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Max at bar</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Waiting now</th>
                     <th className="px-4 py-3 text-center text-sm font-medium text-gray-600 w-28">Status</th>
-                    {isAdmin && <th className="px-4 py-3"></th>}
-                    {isAdmin && <th className="px-4 py-3"></th>}
+                    {canManageQueues && <th className="px-4 py-3"></th>}
+                    {canManageQueues && <th className="px-4 py-3"></th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {queues.map((q) => (
                     <tr
                       key={q.id}
-                      className="hover:bg-gray-50 cursor-pointer"
+                      className="hover:bg-blue-50 cursor-pointer transition-colors"
                       onMouseEnter={() => setHoveredQueueId(q.id)}
                       onMouseLeave={() => setHoveredQueueId(null)}
-                      onClick={() => isAdmin && openEditQueue(q)}
+                      onClick={() => canManageQueues && navigate(`/dashboard/business/${id}/queue/${q.id}`)}
                     >
-                      <td className="px-4 py-3 text-sm text-gray-900 font-medium">{q.name}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900 font-medium">{queuePatches[q.id]?.name ?? q.name}</td>
                       <td className="px-4 py-3 text-sm text-gray-600">
                         <span className="inline-flex items-center gap-1">
-                          <span className="font-medium">{q.max_bar_capacity}</span>
+                          <span className="font-medium">{queuePatches[q.id]?.max_bar_capacity ?? q.max_bar_capacity}</span>
                           <span className="text-gray-400 text-xs">customers</span>
                         </span>
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {(() => {
+                          const maxBar = queuePatches[q.id]?.max_bar_capacity ?? q.max_bar_capacity
                           const count = queueCounts[q.id] ?? q.current_waiting
-                          const atBar = Math.min(count, q.max_bar_capacity)
-                          const atTable = Math.max(0, count - q.max_bar_capacity)
+                          const atBar = Math.min(count, maxBar)
+                          const atTable = Math.max(0, count - maxBar)
                           return (
                             <span className="inline-flex items-center gap-2">
                               <span className={`font-semibold text-base ${count > 0 ? 'text-blue-600' : 'text-gray-400'}`}>
@@ -672,7 +753,7 @@ export function BusinessDetailPage() {
                       <td className="px-4 py-3 text-sm text-center">
                         {(() => {
                           const active = queueStatuses[q.id] ?? q.is_active
-                          return isAdmin ? (
+                          return canManageQueues ? (
                             <button
                               onClick={(e) => handleToggleQueueStatus(q.id, e)}
                               className={`px-3 py-1 text-xs rounded-full font-medium transition-colors ${
@@ -690,7 +771,7 @@ export function BusinessDetailPage() {
                           )
                         })()}
                       </td>
-                      {isAdmin && (
+                      {canManageQueues && (
                         <td className="px-4 py-3 text-right">
                           <Link
                             to={`/dashboard/analytics?business_id=${id}&queue_id=${q.id}`}
@@ -701,16 +782,28 @@ export function BusinessDetailPage() {
                           </Link>
                         </td>
                       )}
-                      {isAdmin && (
+                      {canManageQueues && (
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleDeleteQueue(q.id) }}
-                            className={`px-3 py-1 text-xs bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-all ${
-                              hoveredQueueId === q.id ? 'opacity-100' : 'opacity-0'
-                            }`}
-                          >
-                            Delete
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openEditQueue(q) }}
+                              className={`px-3 py-1 text-xs bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-all ${
+                                hoveredQueueId === q.id ? 'opacity-100' : 'opacity-0'
+                              }`}
+                            >
+                              Edit
+                            </button>
+                            {isAdmin && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteQueue(q.id) }}
+                                className={`px-3 py-1 text-xs bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-all ${
+                                  hoveredQueueId === q.id ? 'opacity-100' : 'opacity-0'
+                                }`}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -744,16 +837,18 @@ export function BusinessDetailPage() {
             )}
 
             <form onSubmit={handleSaveBusiness} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                <input
-                  type="text"
-                  value={businessForm.name}
-                  onChange={(e) => setBusinessForm({ ...businessForm, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
-                  required
-                />
-              </div>
+              {isAdmin && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                  <input
+                    type="text"
+                    value={businessForm.name}
+                    onChange={(e) => setBusinessForm({ ...businessForm, name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
+                    required
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
                 <input
@@ -967,5 +1062,88 @@ export function BusinessDetailPage() {
         </div>
       )}
     </Layout>
+  )
+}
+
+// ── QR Code Card ──────────────────────────────────────────────────────────────
+
+function QRCodeCard({ businessId, businessName }: { businessId: string; businessName: string }) {
+  const [copied, setCopied] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [publicBase, setPublicBase] = useState<string | null>(null)
+  const copiedTimer = useRef<number | null>(null)
+
+  useEffect(() => {
+    fetch('/api/public/config')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.public_url) setPublicBase(data.public_url) })
+      .catch(() => {})
+  }, [])
+
+  const baseUrl = publicBase ?? window.location.origin
+  const joinUrl = `${baseUrl}/join/${businessId}`
+  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=10&data=${encodeURIComponent(joinUrl)}`
+
+  const handleDownload = useCallback(async () => {
+    setDownloading(true)
+    try {
+      const res = await fetch(qrImageUrl)
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = `${businessName.replace(/\s+/g, '-').toLowerCase()}-qr.png`
+      link.click()
+      URL.revokeObjectURL(objectUrl)
+    } catch {
+      window.open(qrImageUrl, '_blank')
+    } finally {
+      setDownloading(false)
+    }
+  }, [qrImageUrl, businessName])
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(joinUrl)
+    } catch {
+      prompt('Copy this link:', joinUrl)
+      return
+    }
+    setCopied(true)
+    if (copiedTimer.current) clearTimeout(copiedTimer.current)
+    copiedTimer.current = window.setTimeout(() => setCopied(false), 2000)
+  }, [joinUrl])
+
+  return (
+    <div className="flex flex-col items-center gap-3 w-52 shrink-0">
+      <div className="text-center">
+        <p className="text-sm font-semibold text-gray-700">Customer QR Code</p>
+        <p className="text-xs text-gray-400 mt-0.5">Scan to join the queue</p>
+      </div>
+
+      <div className="p-2 bg-gray-50 rounded-xl border border-gray-100">
+        <img src={qrImageUrl} alt="QR code" width={160} height={160} className="rounded" />
+      </div>
+
+      <div className="flex gap-2 w-full">
+        <button
+          onClick={handleDownload}
+          disabled={downloading}
+          className="flex-1 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-60 transition-colors font-medium"
+        >
+          {downloading ? '…' : 'Download'}
+        </button>
+        <button
+          onClick={handleCopy}
+          className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-colors font-medium border ${
+            copied
+              ? 'bg-green-50 text-green-700 border-green-200'
+              : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+          }`}
+        >
+          {copied ? 'Copied!' : 'Copy Link'}
+        </button>
+      </div>
+    </div>
   )
 }

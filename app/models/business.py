@@ -10,6 +10,7 @@ class Business(Base):
     name = Column(String, nullable=False)
     address = Column(String, nullable=False)
     phone = Column(String, nullable=False)
+    slug = Column(String, unique=True, nullable=True, index=True)
 
     # Relationships
     users = relationship("User", back_populates="business")
