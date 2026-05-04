@@ -1,7 +1,12 @@
-version: '3.8'
+# Development docker-compose
+# NOTE: All ports are exposed for debugging convenience.
+# In PRODUCTION, only nginx (80/443) should be public!
+# Use docker-compose.prod.yml for production deployments.
 
 services:
   # PostgreSQL Database
+  # DEV: exposed on :5432 for GUI tools (DBeaver, pgAdmin)
+  # PROD: internal only
   db:
     image: postgres:15-alpine
     restart: always
@@ -10,7 +15,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: virtual_queue
     ports:
-      - "5432:5432"
+      - "5432:5432"  # Remove in production
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,12 +25,14 @@ services:
       retries: 5
 
   # Redis for Pub/Sub
+  # DEV: exposed on :6379 for redis-cli, RedisInsight
+  # PROD: internal only
   redis:
     image: redis:7-alpine
     restart: always
     command: redis-server --maxclients 50000
     ports:
-      - "6379:6379"
+      - "6379:6379"  # Remove in production
     volumes:
       - redisdata:/data
     healthcheck:
@@ -35,6 +42,8 @@ services:
       retries: 5
 
   # FastAPI Backend
+  # DEV: exposed on :8000 for direct API testing, Swagger UI
+  # PROD: internal only (accessed via nginx)
   api:
     build: .
     restart: always
@@ -53,27 +62,61 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your-super-secret-key-change-in-production}
       RESENDER_API_KEY: ${RESENDER_API_KEY:-}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8000}
+      PUBLIC_URL: ${PUBLIC_URL:-}
       LOG_LEVEL: INFO
     ports:
-      - "8000:8000"
+      - "8000:8000"  # Remove in production
     volumes:
       - ./app:/app/app
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-  # Nginx Reverse Proxy (for development)
+  # React Frontend (development with hot-reload)
+  # DEV: Vite dev server with HMR on :3000
+  # PROD: built static files served by nginx
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    depends_on:
+      - api
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - DOCKER_ENV=true
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+
+  # Cloudflare Tunnel — exposes the app publicly without port-forwarding.
+  # Creates a free HTTPS tunnel to http://frontend:3000 (Vite dev proxy handles /api and /ws).
+  # Usage: docker compose --profile tunnel up
+  # Get the public URL: docker compose logs cloudflared | grep trycloudflare
+  # Or set PUBLIC_URL in .env to use your own stable URL (ngrok, etc.) instead.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:8080 --url http://frontend:3000
+    depends_on:
+      - frontend
+    profiles:
+      - tunnel
+
+  # Nginx Reverse Proxy (optional in dev, required in prod)
+  # Use: docker compose --profile full up
   nginx:
     image: nginx:alpine
     restart: always
     depends_on:
       - api
+      - frontend
     ports:
       - "80:80"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
     profiles:
-      - full
+      - full  # Only starts with: docker compose --profile full up
 
 volumes:
   pgdata:
   redisdata:
-

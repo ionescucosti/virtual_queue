@@ -2,6 +2,7 @@ import { useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store'
 import { authApi } from '../services/api'
+import { wsService } from '../services/websocket'
 
 export function useAuth() {
   const navigate = useNavigate()
@@ -44,6 +45,7 @@ export function useAuth() {
   }, [])
 
   const handleLogout = useCallback(() => {
+    wsService.disconnect()
     logout()
     navigate('/login')
   }, [logout, navigate])

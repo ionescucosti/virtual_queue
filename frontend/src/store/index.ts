@@ -7,7 +7,7 @@ export interface User {
   lastname: string
   username: string
   email: string
-  role: 'ADMIN' | 'OWNER' | 'STAFF'
+  role: 'ADMIN' | 'MANAGER' | 'STAFF'
   is_active: boolean
 }
 
@@ -43,8 +43,12 @@ interface WebSocketState {
   isConnected: boolean
   connectionId: string | null
   queueId: string | null
+  queueCounts: Record<number, number>
+  queueStatuses: Record<number, boolean>
   setConnected: (connected: boolean, connectionId?: string) => void
   setQueueId: (queueId: string | null) => void
+  setQueueCount: (queueId: number, count: number) => void
+  setQueueStatus: (queueId: number, isActive: boolean) => void
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -105,8 +109,16 @@ export const useWebSocketStore = create<WebSocketState>((set) => ({
   isConnected: false,
   connectionId: null,
   queueId: null,
+  queueCounts: {},
+  queueStatuses: {},
   setConnected: (connected, connectionId) => set({ isConnected: connected, connectionId: connectionId || null }),
   setQueueId: (queueId) => set({ queueId }),
+  setQueueCount: (queueId, count) => set((state) => ({
+    queueCounts: { ...state.queueCounts, [queueId]: count }
+  })),
+  setQueueStatus: (queueId, isActive) => set((state) => ({
+    queueStatuses: { ...state.queueStatuses, [queueId]: isActive }
+  })),
 }))
 
 // Helper function to play notification sound

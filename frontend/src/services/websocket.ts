@@ -12,6 +12,10 @@ class WebSocketService {
   private isStaff = false
 
   connect(queueId?: string, asStaff = false) {
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return
+    }
+
     const token = useAuthStore.getState().token
     if (!token) {
       console.error('No auth token available')
@@ -70,7 +74,7 @@ class WebSocketService {
 
   private handleMessage(data: any) {
     const { addNotification } = useNotificationStore.getState()
-    const { setConnected, setQueueId } = useWebSocketStore.getState()
+    const { setConnected, setQueueId, setQueueCount, setQueueStatus } = useWebSocketStore.getState()
 
     switch (data.type) {
       case 'connected':
@@ -109,8 +113,15 @@ class WebSocketService {
         })
         break
 
+      case 'queue_count_update':
+        setQueueCount(data.queue_id, data.current_waiting)
+        break
+
+      case 'queue_status_update':
+        setQueueStatus(data.queue_id, data.is_active)
+        break
+
       case 'pong':
-        // Heartbeat response, connection is alive
         break
 
       case 'announce_sent':

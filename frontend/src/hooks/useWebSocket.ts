@@ -9,10 +9,6 @@ export function useWebSocket(queueId?: string, asStaff = false) {
   useEffect(() => {
     if (isAuthenticated) {
       wsService.connect(queueId, asStaff)
-
-      return () => {
-        wsService.disconnect()
-      }
     }
   }, [isAuthenticated, queueId, asStaff])
 
