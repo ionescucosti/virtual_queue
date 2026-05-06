@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Navigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { Layout } from '../components/Layout'
@@ -26,13 +26,27 @@ export function DashboardPage() {
     )
   }
 
+  if (user.role === 'MANAGER') {
+    if (user.business_id) {
+      return <Navigate to={`/dashboard/business/${user.business_id}`} replace />
+    }
+    return (
+      <Layout>
+        <div className="max-w-md mx-auto px-4 py-24 text-center">
+          <div className="bg-white rounded-xl shadow-sm p-10">
+            <p className="text-4xl mb-4">🏢</p>
+            <h2 className="text-xl font-bold text-gray-800 mb-2">No business assigned</h2>
+            <p className="text-gray-500 text-sm">Contact the administrator to get assigned to a business.</p>
+          </div>
+        </div>
+      </Layout>
+    )
+  }
+
   return (
     <Layout>
       <div className="max-w-7xl mx-auto px-4 py-6">
-
-        {/* Role-specific content */}
         {user.role === 'ADMIN' && <AdminDashboard />}
-        {user.role === 'MANAGER' && <ManagerDashboard sendAnnouncement={sendAnnouncement} />}
         {user.role === 'STAFF' && <StaffDashboard sendAnnouncement={sendAnnouncement} callCustomer={callCustomer} />}
       </div>
     </Layout>

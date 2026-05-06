@@ -9,6 +9,7 @@ export interface User {
   email: string
   role: 'ADMIN' | 'MANAGER' | 'STAFF'
   is_active: boolean
+  business_id: number | null
 }
 
 export interface Notification {
