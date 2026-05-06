@@ -70,3 +70,12 @@ def require_role(*roles: UserRole):
         return current_user
     return role_checker
 
+def get_current_user_business(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency: requires authenticated user with a business assignment (MANAGER or STAFF)."""
+    if current_user.role not in (UserRole.MANAGER, UserRole.STAFF):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Managers and Staff only."
+        )
+    return current_user
+

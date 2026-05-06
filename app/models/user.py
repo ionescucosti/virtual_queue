@@ -1,14 +1,14 @@
 import enum
 import secrets
-from sqlalchemy import Column, Integer, String, Enum, Boolean
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, Integer, String, Enum, Boolean, ForeignKey
+from sqlalchemy.orm import declarative_base, relationship
 import bcrypt
 
 Base = declarative_base()
 
 class UserRole(enum.Enum):
     ADMIN = "ADMIN"
-    OWNER = "OWNER"
+    MANAGER = "MANAGER"
     STAFF = "STAFF"
 
 class User(Base):
@@ -22,6 +22,8 @@ class User(Base):
     role = Column(Enum(UserRole), nullable=False)
     is_active = Column(Boolean, default=False)
     activation_token = Column(String, nullable=True, unique=True)
+    business_id = Column(Integer, ForeignKey("business.id"), nullable=True)
+    business = relationship("Business", back_populates="users")
 
     @staticmethod
     def hash_password(plain_password: str) -> str:
