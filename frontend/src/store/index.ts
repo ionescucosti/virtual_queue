@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 export interface User {
   id: number
@@ -57,12 +57,20 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       user: null,
       isAuthenticated: false,
-      setToken: (token) => set({ token, isAuthenticated: true }),
+      setToken: (token) => {
+        localStorage.setItem('vq_active_session', 'true')
+        set({ token, isAuthenticated: true })
+      },
       setUser: (user) => set({ user }),
-      logout: () => set({ token: null, user: null, isAuthenticated: false }),
+      logout: () => {
+        localStorage.removeItem('vq_active_session')
+        new BroadcastChannel('vq_session').postMessage({ type: 'logout' })
+        set({ token: null, user: null, isAuthenticated: false })
+      },
     }),
     {
       name: 'auth-storage',
+      storage: createJSONStorage(() => sessionStorage),
     }
   )
 )
