@@ -96,7 +96,7 @@ export function BusinessDetailPage() {
   const isManager = user?.role === 'MANAGER'
   const isStaff = user?.role === 'STAFF'
   const canManageQueues = isAdmin || isManager
-  const { queueCounts, queueStatuses, queuePatches } = useWebSocketStore()
+  const { queueCounts, queueStatuses } = useWebSocketStore()
 
   const isEditUserDirty =
     editUserForm.name !== originalEditForm.name ||
@@ -723,16 +723,16 @@ export function BusinessDetailPage() {
                       onMouseLeave={() => setHoveredQueueId(null)}
                       onClick={() => canManageQueues && navigate(`/dashboard/business/${id}/queue/${q.id}`)}
                     >
-                      <td className="px-4 py-3 text-sm text-gray-900 font-medium">{queuePatches[q.id]?.name ?? q.name}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900 font-medium">{q.name}</td>
                       <td className="px-4 py-3 text-sm text-gray-600">
                         <span className="inline-flex items-center gap-1">
-                          <span className="font-medium">{queuePatches[q.id]?.max_bar_capacity ?? q.max_bar_capacity}</span>
+                          <span className="font-medium">{q.max_bar_capacity}</span>
                           <span className="text-gray-400 text-xs">customers</span>
                         </span>
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {(() => {
-                          const maxBar = queuePatches[q.id]?.max_bar_capacity ?? q.max_bar_capacity
+                          const maxBar = q.max_bar_capacity
                           const count = queueCounts[q.id] ?? q.current_waiting
                           const atBar = Math.min(count, maxBar)
                           const atTable = Math.max(0, count - maxBar)
