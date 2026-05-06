@@ -24,6 +24,7 @@ class User(Base):
     activation_token = Column(String, nullable=True, unique=True)
     business_id = Column(Integer, ForeignKey("business.id"), nullable=True)
     business = relationship("Business", back_populates="users")
+    assigned_queue_id = Column(Integer, ForeignKey("queue.id"), nullable=True)
 
     @staticmethod
     def hash_password(plain_password: str) -> str:
