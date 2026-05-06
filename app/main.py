@@ -33,14 +33,22 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting application with log level: %s", log_level)
     Base.metadata.create_all(bind=engine)
-    # Safe migration: add assigned_queue_id column if not yet present
+    # Safe idempotent migrations
     with engine.connect() as conn:
         conn.execute(text(
             'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS '
             'assigned_queue_id INTEGER REFERENCES queue(id) ON DELETE SET NULL'
         ))
         conn.execute(text(
+            'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS '
+            'business_id INTEGER REFERENCES business(id) ON DELETE SET NULL'
+        ))
+        conn.execute(text(
             'ALTER TABLE business ADD COLUMN IF NOT EXISTS slug VARCHAR UNIQUE'
+        ))
+        # Rename legacy OWNER role to MANAGER (cast to text to bypass enum check)
+        conn.execute(text(
+            "UPDATE \"user\" SET role = 'MANAGER' WHERE role::text = 'OWNER'"
         ))
         conn.commit()
     await redis_pubsub.connect()

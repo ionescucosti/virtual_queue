@@ -8,8 +8,8 @@ resend.api_key = os.getenv("RESENDER_API_KEY")
 
 def send_activation_email(to_email: str, activation_token: str, name: str):
     """Send activation email with link to set password."""
-    base_url = os.getenv("APP_BASE_URL", "http://localhost:8000")
-    activation_link = f"{base_url}/auth/activate?token={activation_token}"
+    base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    activation_link = f"{base_url}/activate?token={activation_token}"
 
     html_content = f"""
     <h2>Welcome to Virtual Queue, {name}!</h2>
