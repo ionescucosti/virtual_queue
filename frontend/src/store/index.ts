@@ -10,6 +10,7 @@ export interface User {
   role: 'ADMIN' | 'MANAGER' | 'STAFF'
   is_active: boolean
   business_id: number | null
+  assigned_queue_id: number | null
 }
 
 export interface Notification {
@@ -46,10 +47,12 @@ interface WebSocketState {
   queueId: string | null
   queueCounts: Record<number, number>
   queueStatuses: Record<number, boolean>
+  queueEntriesVersion: Record<number, number>
   setConnected: (connected: boolean, connectionId?: string) => void
   setQueueId: (queueId: string | null) => void
   setQueueCount: (queueId: number, count: number) => void
   setQueueStatus: (queueId: number, isActive: boolean) => void
+  incrementEntriesVersion: (queueId: number) => void
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -120,6 +123,7 @@ export const useWebSocketStore = create<WebSocketState>((set) => ({
   queueId: null,
   queueCounts: {},
   queueStatuses: {},
+  queueEntriesVersion: {},
   setConnected: (connected, connectionId) => set({ isConnected: connected, connectionId: connectionId || null }),
   setQueueId: (queueId) => set({ queueId }),
   setQueueCount: (queueId, count) => set((state) => ({
@@ -127,6 +131,9 @@ export const useWebSocketStore = create<WebSocketState>((set) => ({
   })),
   setQueueStatus: (queueId, isActive) => set((state) => ({
     queueStatuses: { ...state.queueStatuses, [queueId]: isActive }
+  })),
+  incrementEntriesVersion: (queueId) => set((state) => ({
+    queueEntriesVersion: { ...state.queueEntriesVersion, [queueId]: (state.queueEntriesVersion[queueId] ?? 0) + 1 }
   })),
 }))
 

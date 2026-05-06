@@ -33,5 +33,6 @@ class UserResponse(BaseModel):
     role: UserRole
     is_active: bool
     business_id: Optional[int] = None
+    assigned_queue_id: Optional[int] = None
 
 

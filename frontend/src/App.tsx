@@ -9,6 +9,7 @@ import { RegisterPage } from './pages/RegisterPage'
 import { ActivatePage } from './pages/ActivatePage'
 import { DashboardPage } from './pages/DashboardPage'
 import { BusinessDetailPage } from './pages/BusinessDetailPage'
+import { QueueDetailPage } from './pages/QueueDetailPage'
 import { AnalyticsPage } from './pages/AnalyticsPage'
 
 const SESSION_KEY = 'vq_active_session'
@@ -144,6 +145,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <BusinessDetailPage />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/dashboard/business/:businessId/queue/:queueId"
+          element={
+            <PrivateRoute>
+              <QueueDetailPage />
             </PrivateRoute>
           }
         />
