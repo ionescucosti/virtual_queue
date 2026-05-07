@@ -108,15 +108,38 @@ export function JoinQueuePage() {
 
   // Refs for use inside WS closure
   const activeEntryRef = useRef<ActiveEntry | null>(null)
+  const businessRef = useRef<BusinessInfo | null>(null)
   const deviceToken = useRef(getOrCreateDeviceToken())
   const wsRef = useRef<WebSocket | null>(null)
   const pingRef = useRef<number | null>(null)
   const pollRef = useRef<number | null>(null)
 
-  // Keep ref in sync with state
-  useEffect(() => {
-    activeEntryRef.current = activeEntry
-  }, [activeEntry])
+  // Keep refs in sync with state
+  useEffect(() => { activeEntryRef.current = activeEntry }, [activeEntry])
+  useEffect(() => { businessRef.current = business }, [business])
+
+  // ── Fetch / refresh business info ──────────────────────────────────────────
+
+  const fetchBusiness = useCallback(async () => {
+    const current = businessRef.current
+    if (!current) return
+    try {
+      const res = await fetch(`${API}/businesses/by-slug/${current.slug ?? current.id}`)
+      if (!res.ok) return
+      const biz: BusinessInfo = await res.json()
+      setBusiness(biz)
+      setLiveCounts(prev => {
+        const next = { ...prev }
+        biz.queues.forEach(q => { next[q.id] = q.current_waiting })
+        return next
+      })
+      setLiveStatuses(prev => {
+        const next = { ...prev }
+        biz.queues.forEach(q => { next[q.id] = q.is_active })
+        return next
+      })
+    } catch { /* silently ignore */ }
+  }, [])
 
   // ── Fetch position ──────────────────────────────────────────────────────────
 
@@ -199,6 +222,10 @@ export function JoinQueuePage() {
             break
           }
 
+          case 'business_queues_changed':
+            if (msg.business_id === businessRef.current?.id) fetchBusiness()
+            break
+
           case 'announcement':
             if (!msg.queue_id || activeEntryRef.current?.queueId === qid) {
               setAnnouncements(prev =>
@@ -219,7 +246,7 @@ export function JoinQueuePage() {
       if (pingRef.current) clearInterval(pingRef.current)
       ws.close(1000)
     }
-  }, [fetchPosition])
+  }, [fetchPosition, fetchBusiness])
 
   // Subscribe to queue after WS is open (for targeted announcements)
   const subscribeToQueue = useCallback((queueId: number) => {

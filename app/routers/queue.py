@@ -136,7 +136,7 @@ def list_queues(
 
 
 @router.post("/{business_id}/queues", response_model=QueueResponse, status_code=status.HTTP_201_CREATED)
-def create_queue(
+async def create_queue(
     business_id: int,
     queue_data: QueueCreate,
     db: Session = Depends(get_db),
@@ -158,6 +158,9 @@ def create_queue(
     db.add(queue)
     db.commit()
     db.refresh(queue)
+
+    await manager.broadcast({"type": "business_queues_changed", "business_id": business_id})
+
     return queue
 
 
@@ -444,7 +447,7 @@ def get_queue_analytics(
 
 
 @router.delete("/{business_id}/queues/{queue_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_queue(
+async def delete_queue(
     business_id: int,
     queue_id: int,
     db: Session = Depends(get_db),
@@ -456,4 +459,7 @@ def delete_queue(
 
     db.delete(queue)
     db.commit()
+
+    await manager.broadcast({"type": "business_queues_changed", "business_id": business_id})
+
     return None
