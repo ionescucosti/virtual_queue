@@ -80,13 +80,13 @@ export function QueueDetailPage() {
   }
 
   useEffect(() => {
-    if (queue && isActive) loadEntries()
+    if (queue) loadEntries()
     else setEntries([])
   }, [queue?.id, isActive])
 
   const entriesVersion = queue ? (queueEntriesVersion[queue.id] ?? 0) : 0
   useEffect(() => {
-    if (entriesVersion > 0 && queue && isActive) loadEntries()
+    if (entriesVersion > 0 && queue) loadEntries()
   }, [entriesVersion])
 
   const loadQueue = async () => {
@@ -276,7 +276,7 @@ export function QueueDetailPage() {
           </div>
         </div>
 
-        {isActive && (<>
+        {(isActive || entries.length > 0) && (<>
           {/* Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <StatCard
@@ -393,7 +393,10 @@ export function QueueDetailPage() {
             </div>
           </div>
 
-          {/* Broadcast announcement */}
+        </>)}
+
+        {/* Broadcast announcement — only available while queue is accepting new customers */}
+        {isActive && (
           <div className="bg-white rounded-xl shadow-sm p-6">
             <h2 className="text-lg font-bold text-gray-900 mb-1">Broadcast Message</h2>
             <p className="text-sm text-gray-500 mb-4">
@@ -436,7 +439,7 @@ export function QueueDetailPage() {
               )}
             </div>
           </div>
-        </>)}
+        )}
 
       </div>
 

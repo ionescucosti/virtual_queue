@@ -512,14 +512,6 @@ export function JoinQueuePage() {
                 </div>
               )}
 
-              {/* Queue deactivated warning */}
-              {!positionData.queue_is_active && view === 'waiting' && (
-                <div className="bg-orange-50 border border-orange-300 rounded-xl px-4 py-3">
-                  <p className="text-orange-800 text-sm font-medium">
-                    ⚠️ This queue has been paused. Staff will reopen it shortly.
-                  </p>
-                </div>
-              )}
 
               {/* Main position card */}
               <div className="bg-white rounded-2xl shadow-xl p-6 text-center">
