@@ -21,4 +21,5 @@ class BusinessResponse(BaseModel):
     name: str
     address: str
     phone: str
+    slug: str | None = None
 

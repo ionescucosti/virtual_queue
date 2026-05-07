@@ -38,6 +38,7 @@ class BusinessPublicInfo(BaseModel):
     name: str
     address: str
     phone: str
+    slug: str | None = None
     queues: List[QueuePublicInfo]
 
 
@@ -105,6 +106,38 @@ def get_business_public(business_id: int, db: Session = Depends(get_db)):
         name=business.name,
         address=business.address,
         phone=business.phone,
+        slug=business.slug,
+        queues=[
+            QueuePublicInfo(
+                id=q.id,
+                name=q.name,
+                max_bar_capacity=q.max_bar_capacity,
+                current_waiting=q.current_waiting,
+                is_active=q.is_active,
+            )
+            for q in queues
+        ],
+    )
+
+
+@router.get("/businesses/by-slug/{slug}", response_model=BusinessPublicInfo)
+def get_business_by_slug(slug: str, db: Session = Depends(get_db)):
+    """Public: get business by slug or ID (for customer-friendly URLs)."""
+    # First try slug lookup
+    business = db.query(Business).filter(Business.slug == slug).first()
+    # Fallback: try numeric ID if slug not found
+    if not business and slug.isdigit():
+        business = db.query(Business).filter(Business.id == int(slug)).first()
+    if not business:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
+
+    queues = db.query(Queue).filter(Queue.business_id == business.id).all()
+    return BusinessPublicInfo(
+        id=business.id,
+        name=business.name,
+        address=business.address,
+        phone=business.phone,
+        slug=business.slug,
         queues=[
             QueuePublicInfo(
                 id=q.id,
@@ -269,11 +302,16 @@ def get_public_config():
     Returns the public-facing base URL for customer QR codes.
 
     Priority:
-      1. cloudflared quick-tunnel URL (auto-discovered when running with --profile tunnel)
-      2. PUBLIC_URL env var (set manually for stable URLs — ngrok, cloud, etc.)
+      1. PUBLIC_URL env var (set manually for stable URLs — local IP, ngrok, cloud, etc.)
+      2. cloudflared quick-tunnel URL (auto-discovered when running with --profile tunnel)
       3. null  (frontend falls back to window.location.origin)
     """
-    # 1. Try cloudflared quick-tunnel metrics API (only works inside Docker network)
+    # 1. Manual PUBLIC_URL env var takes priority
+    public_url = os.getenv("PUBLIC_URL", "").strip()
+    if public_url:
+        return {"public_url": public_url.rstrip("/"), "source": "env"}
+
+    # 2. Try cloudflared quick-tunnel metrics API (only works inside Docker network)
     try:
         with urllib.request.urlopen("http://cloudflared:8080/quicktunnel", timeout=1) as resp:
             data = json.loads(resp.read())
@@ -285,9 +323,5 @@ def get_public_config():
     except Exception:
         pass
 
-    # 2. Manual PUBLIC_URL env var
-    public_url = os.getenv("PUBLIC_URL", "").strip()
-    if public_url:
-        return {"public_url": public_url.rstrip("/"), "source": "env"}
 
     return {"public_url": None, "source": "none"}

@@ -16,6 +16,7 @@ interface BusinessInfo {
   name: string
   address: string
   phone: string
+  slug: string | null
   queues: QueueInfo[]
 }
 
@@ -91,8 +92,8 @@ const API = '/api/public'
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function JoinQueuePage() {
-  const { businessId } = useParams<{ businessId: string }>()
-  const bizId = Number(businessId)
+  const { businessId, slug } = useParams<{ businessId?: string; slug?: string }>()
+  const [bizId, setBizId] = useState<number | null>(businessId ? Number(businessId) : null)
   const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
 
   const [view, setView] = useState<ViewState>('loading')
@@ -250,10 +251,15 @@ export function JoinQueuePage() {
   useEffect(() => {
     ;(async () => {
       try {
-        const res = await fetch(`${API}/businesses/${bizId}`)
+        // Fetch business by slug or by ID
+        const endpoint = slug
+          ? `${API}/businesses/by-slug/${encodeURIComponent(slug)}`
+          : `${API}/businesses/${bizId}`
+        const res = await fetch(endpoint)
         if (!res.ok) throw new Error()
         const biz: BusinessInfo = await res.json()
         setBusiness(biz)
+        setBizId(biz.id)
 
         const counts: Record<number, number> = {}
         const statuses: Record<number, boolean> = {}
@@ -263,7 +269,7 @@ export function JoinQueuePage() {
 
         // Restore active entry if any
         const stored = loadActiveEntry()
-        if (stored && stored.businessId === bizId) {
+        if (stored && stored.businessId === biz.id) {
           setActiveEntry(stored)
           activeEntryRef.current = stored
           await fetchPosition(stored)
@@ -277,11 +283,12 @@ export function JoinQueuePage() {
         setView('error')
       }
     })()
-  }, [bizId, fetchPosition, subscribeToQueue])
+  }, [slug, bizId, fetchPosition, subscribeToQueue])
 
   // ── Join queue ──────────────────────────────────────────────────────────────
 
   const joinQueue = async (queueId: number) => {
+    if (!bizId) return
     setError(null)
     setView('joining')
     try {

@@ -11,6 +11,7 @@ interface Business {
   name: string
   address: string
   phone: string
+  slug: string | null
 }
 
 interface Queue {
@@ -192,7 +193,7 @@ export function QueueDetailPage() {
                 <p className="text-sm text-gray-500 mt-1">{business.address}</p>
                 <p className="text-sm text-gray-500">{business.phone}</p>
               </div>
-              <QRCodeCard businessId={String(business.id)} businessName={business.name} />
+              <QRCodeCard businessId={String(business.id)} businessName={business.name} businessSlug={business.slug} />
             </div>
           </div>
         )}
@@ -411,7 +412,7 @@ export function QueueDetailPage() {
   )
 }
 
-function QRCodeCard({ businessId, businessName }: { businessId: string; businessName: string }) {
+function QRCodeCard({ businessId, businessName, businessSlug }: { businessId: string; businessName: string; businessSlug: string | null }) {
   const [copied, setCopied] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [publicBase, setPublicBase] = useState<string | null>(null)
@@ -425,7 +426,10 @@ function QRCodeCard({ businessId, businessName }: { businessId: string; business
   }, [])
 
   const baseUrl = publicBase ?? window.location.origin
-  const joinUrl = `${baseUrl}/join/${businessId}`
+  // Use slug for friendly URL if available, fall back to ID-based URL
+  const joinUrl = businessSlug
+    ? `${baseUrl}/${businessSlug}`
+    : `${baseUrl}/join/${businessId}`
   const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=10&data=${encodeURIComponent(joinUrl)}`
 
   const handleDownload = useCallback(async () => {

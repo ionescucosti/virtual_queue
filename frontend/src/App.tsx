@@ -11,6 +11,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { BusinessDetailPage } from './pages/BusinessDetailPage'
 import { QueueDetailPage } from './pages/QueueDetailPage'
 import { AnalyticsPage } from './pages/AnalyticsPage'
+import { JoinQueuePage } from './pages/JoinQueuePage'
 
 const SESSION_KEY = 'vq_active_session'
 
@@ -166,8 +167,11 @@ export default function App() {
         />
 
         {/* Default redirect */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />}  />
+
+        {/* Customer-facing routes (no auth required) */}
+        <Route path="/join/:businessId" element={<JoinQueuePage />} />
+        <Route path="/:slug" element={<JoinQueuePage />} />
       </Routes>
     </BrowserRouter>
   )
