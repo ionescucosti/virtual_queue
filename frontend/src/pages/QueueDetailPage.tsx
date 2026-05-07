@@ -52,6 +52,8 @@ export function QueueDetailPage() {
   const [announcement, setAnnouncement] = useState('')
   const [announcementSent, setAnnouncementSent] = useState(false)
   const announcementTimer = useRef<number | null>(null)
+  const [editingMaxBar, setEditingMaxBar] = useState(false)
+  const [maxBarInput, setMaxBarInput] = useState('')
 
   const liveName = queue ? queue.name : ''
   const liveMaxBar = queue ? queue.max_bar_capacity : 0
@@ -156,6 +158,19 @@ export function QueueDetailPage() {
     announcementTimer.current = window.setTimeout(() => setAnnouncementSent(false), 3000)
   }
 
+  const handleSaveMaxBar = async () => {
+    const val = parseInt(maxBarInput, 10)
+    if (!queue || isNaN(val) || val < 1) return
+    try {
+      const updated = await apiHelpers.put(`/api/businesses/${businessId}/queues/${queueId}`, { max_bar_capacity: val })
+      setQueue(updated)
+      setEditingMaxBar(false)
+    } catch (e) {
+      console.error('Error updating max bar capacity:', e)
+      alert('Failed to update capacity')
+    }
+  }
+
   const isStaff = user?.role === 'STAFF'
   const canManage = user?.role === 'ADMIN' || user?.role === 'MANAGER' || isStaff
 
@@ -213,14 +228,37 @@ export function QueueDetailPage() {
             <div className="flex items-start justify-between">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">{liveName}</h1>
-                <p className="text-sm text-gray-500 mt-1">Max {liveMaxBar} customers at bar simultaneously</p>
+                <div className="flex items-center gap-2 mt-1">
+                  {editingMaxBar ? (
+                    <>
+                      <input
+                        type="number"
+                        min={1}
+                        value={maxBarInput}
+                        onChange={e => setMaxBarInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleSaveMaxBar(); if (e.key === 'Escape') setEditingMaxBar(false) }}
+                        autoFocus
+                        className="w-16 px-2 py-0.5 text-sm border border-blue-400 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button onClick={handleSaveMaxBar} className="text-xs text-white bg-blue-600 hover:bg-blue-700 px-2 py-0.5 rounded">Save</button>
+                      <button onClick={() => setEditingMaxBar(false)} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm text-gray-500">Max {liveMaxBar} customers at bar simultaneously</p>
+                      {canManage && (
+                        <button
+                          onClick={() => { setMaxBarInput(String(liveMaxBar)); setEditingMaxBar(true) }}
+                          className="text-xs text-blue-500 hover:text-blue-700 underline"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-3">
-                <span className={`px-3 py-1 text-sm rounded-full font-medium ${
-                  isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                }`}>
-                  {isActive ? 'Active' : 'Inactive'}
-                </span>
                 {canManage && (
                   <button
                     onClick={handleToggleStatus}
@@ -238,38 +276,38 @@ export function QueueDetailPage() {
           </div>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard
-            label="At bar"
-            value={atBarEntries.length}
-            sub={`of ${liveMaxBar} max`}
-            color="green"
-          />
-          <StatCard
-            label="Waiting"
-            value={liveWaiting}
-            sub={atTableEntries.length > 0 ? `${atTableEntries.length} at table` : 'in queue'}
-            color="blue"
-          />
-          <StatCard
-            label="Served today"
-            value={todayStats?.served ?? '—'}
-            sub={todayStats ? `of ${todayStats.total_joined} total` : 'no session yet'}
-            color="purple"
-          />
-          <StatCard
-            label="Left early"
-            value={todayStats?.abandoned ?? '—'}
-            sub={todayStats && todayStats.total_joined > 0
-              ? `${Math.round(todayStats.abandoned / todayStats.total_joined * 100)}% rate`
-              : ''}
-            color="orange"
-          />
-        </div>
+        {isActive && (<>
+          {/* Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatCard
+              label="At bar"
+              value={atBarEntries.length}
+              sub={`of ${liveMaxBar} max`}
+              color="green"
+            />
+            <StatCard
+              label="Waiting"
+              value={liveWaiting}
+              sub={atTableEntries.length > 0 ? `${atTableEntries.length} at table` : 'in queue'}
+              color="blue"
+            />
+            <StatCard
+              label="Served today"
+              value={todayStats?.served ?? '—'}
+              sub={todayStats ? `of ${todayStats.total_joined} total` : 'no session yet'}
+              color="purple"
+            />
+            <StatCard
+              label="Left early"
+              value={todayStats?.abandoned ?? '—'}
+              sub={todayStats && todayStats.total_joined > 0
+                ? `${Math.round(todayStats.abandoned / todayStats.total_joined * 100)}% rate`
+                : ''}
+              color="orange"
+            />
+          </div>
 
-        {/* Queue management */}
-        {isActive ? (
+          {/* Queue management */}
           <div className="bg-white rounded-xl shadow-sm p-6 space-y-6">
             <h2 className="text-lg font-bold text-gray-900">Queue Management</h2>
 
@@ -354,57 +392,51 @@ export function QueueDetailPage() {
               )}
             </div>
           </div>
-        ) : (
-          <div className="bg-white rounded-xl shadow-sm p-8 text-center">
-            <p className="text-gray-400 text-lg font-medium">Queue is inactive</p>
-            <p className="text-gray-400 text-sm mt-2">Activate the queue to start managing customers.</p>
-          </div>
-        )}
 
-        {/* Broadcast announcement */}
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <h2 className="text-lg font-bold text-gray-900 mb-1">Broadcast Message</h2>
-          <p className="text-sm text-gray-500 mb-4">
-            Send an instant message to all customers currently waiting in this queue.
-          </p>
+          {/* Broadcast announcement */}
+          <div className="bg-white rounded-xl shadow-sm p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-1">Broadcast Message</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Send an instant message to all customers currently waiting in this queue.
+            </p>
 
-          <div className="space-y-3">
-            {/* Quick presets */}
-            <div className="flex flex-wrap gap-2">
-              {QUICK_MESSAGES.map(msg => (
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {QUICK_MESSAGES.map(msg => (
+                  <button
+                    key={msg}
+                    onClick={() => setAnnouncement(msg)}
+                    className="px-3 py-1.5 text-xs bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
+                  >
+                    {msg}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  value={announcement}
+                  onChange={e => setAnnouncement(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSendAnnouncement()}
+                  placeholder="Type a message to all waiting customers…"
+                  className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
+                />
                 <button
-                  key={msg}
-                  onClick={() => setAnnouncement(msg)}
-                  className="px-3 py-1.5 text-xs bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
+                  onClick={handleSendAnnouncement}
+                  disabled={!announcement.trim()}
+                  className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                 >
-                  {msg}
+                  Send
                 </button>
-              ))}
-            </div>
+              </div>
 
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={announcement}
-                onChange={e => setAnnouncement(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSendAnnouncement()}
-                placeholder="Type a message to all waiting customers…"
-                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
-              />
-              <button
-                onClick={handleSendAnnouncement}
-                disabled={!announcement.trim()}
-                className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm font-medium"
-              >
-                Send
-              </button>
+              {announcementSent && (
+                <p className="text-sm text-green-600 font-medium">Message sent to all waiting customers.</p>
+              )}
             </div>
-
-            {announcementSent && (
-              <p className="text-sm text-green-600 font-medium">Message sent to all waiting customers.</p>
-            )}
           </div>
-        </div>
+        </>)}
 
       </div>
 
