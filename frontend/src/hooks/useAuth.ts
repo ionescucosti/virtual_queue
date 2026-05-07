@@ -51,7 +51,7 @@ export function useAuth() {
   }, [logout, navigate])
 
   const fetchUser = useCallback(async () => {
-    if (token && !user) {
+    if (token) {
       try {
         const userData = await authApi.getMe()
         setUser(userData)
@@ -59,7 +59,7 @@ export function useAuth() {
         logout()
       }
     }
-  }, [token, user, setUser, logout])
+  }, [token, setUser, logout])
 
   useEffect(() => {
     fetchUser()

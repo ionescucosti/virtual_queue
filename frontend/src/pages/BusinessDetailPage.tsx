@@ -11,6 +11,7 @@ interface Business {
   name: string
   address: string
   phone: string
+  slug: string | null
 }
 
 interface Queue {
@@ -96,7 +97,7 @@ export function BusinessDetailPage() {
   const isManager = user?.role === 'MANAGER'
   const isStaff = user?.role === 'STAFF'
   const canManageQueues = isAdmin || isManager
-  const { queueCounts, queueStatuses, queuePatches } = useWebSocketStore()
+  const { queueCounts, queueStatuses } = useWebSocketStore()
 
   const isEditUserDirty =
     editUserForm.name !== originalEditForm.name ||
@@ -418,7 +419,7 @@ export function BusinessDetailPage() {
 
             {/* Right: QR code */}
             <div onClick={(e) => e.stopPropagation()}>
-              <QRCodeCard businessId={id!} businessName={business.name} />
+              <QRCodeCard businessId={id!} businessName={business.name} businessSlug={business.slug} />
             </div>
           </div>
         </div>
@@ -723,16 +724,16 @@ export function BusinessDetailPage() {
                       onMouseLeave={() => setHoveredQueueId(null)}
                       onClick={() => canManageQueues && navigate(`/dashboard/business/${id}/queue/${q.id}`)}
                     >
-                      <td className="px-4 py-3 text-sm text-gray-900 font-medium">{queuePatches[q.id]?.name ?? q.name}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900 font-medium">{q.name}</td>
                       <td className="px-4 py-3 text-sm text-gray-600">
                         <span className="inline-flex items-center gap-1">
-                          <span className="font-medium">{queuePatches[q.id]?.max_bar_capacity ?? q.max_bar_capacity}</span>
+                          <span className="font-medium">{q.max_bar_capacity}</span>
                           <span className="text-gray-400 text-xs">customers</span>
                         </span>
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {(() => {
-                          const maxBar = queuePatches[q.id]?.max_bar_capacity ?? q.max_bar_capacity
+                          const maxBar = q.max_bar_capacity
                           const count = queueCounts[q.id] ?? q.current_waiting
                           const atBar = Math.min(count, maxBar)
                           const atTable = Math.max(0, count - maxBar)
@@ -1067,7 +1068,7 @@ export function BusinessDetailPage() {
 
 // ── QR Code Card ──────────────────────────────────────────────────────────────
 
-function QRCodeCard({ businessId, businessName }: { businessId: string; businessName: string }) {
+function QRCodeCard({ businessId, businessName, businessSlug }: { businessId: string; businessName: string; businessSlug: string | null }) {
   const [copied, setCopied] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [publicBase, setPublicBase] = useState<string | null>(null)
@@ -1081,7 +1082,10 @@ function QRCodeCard({ businessId, businessName }: { businessId: string; business
   }, [])
 
   const baseUrl = publicBase ?? window.location.origin
-  const joinUrl = `${baseUrl}/join/${businessId}`
+  // Use slug for friendly URL if available, fall back to ID-based URL
+  const joinUrl = businessSlug
+    ? `${baseUrl}/${businessSlug}`
+    : `${baseUrl}/join/${businessId}`
   const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=10&data=${encodeURIComponent(joinUrl)}`
 
   const handleDownload = useCallback(async () => {

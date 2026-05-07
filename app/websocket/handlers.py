@@ -117,7 +117,7 @@ async def websocket_staff(
     """
     # Verify token
     payload = verify_token(token)
-    if not payload or payload.get("role") not in ["ADMIN", "OWNER", "STAFF"]:
+    if not payload or payload.get("role") not in ["ADMIN", "MANAGER", "STAFF"]:
         await websocket.close(code=4001, reason="Unauthorized")
         return
 

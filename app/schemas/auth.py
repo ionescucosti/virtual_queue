@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import Optional
+
 from app.models.user import UserRole
 
 class UserRegisterRequest(BaseModel):
@@ -31,5 +32,7 @@ class UserResponse(BaseModel):
     email: str
     role: UserRole
     is_active: bool
+    business_id: Optional[int] = None
+    assigned_queue_id: Optional[int] = None
 
 

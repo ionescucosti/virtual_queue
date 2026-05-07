@@ -340,6 +340,26 @@ def activate_account(
         </html>
     """)
 
+@router.post("/activate-api")
+def activate_account_api(
+    token: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Activate account and set password (JSON API for frontend)."""
+    user = db.query(User).filter(User.activation_token == token).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired activation token")
+    if user.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Account is already activated")
+    user.password = User.hash_password(password)
+    user.is_active = True
+    user.activation_token = None
+    db.commit()
+    logger.info(f"User {user.username} activated via frontend")
+    return {"message": "Account activated successfully"}
+
+
 @router.get("/login-page", response_class=HTMLResponse)
 def login_page():
     """Show login form."""

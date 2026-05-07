@@ -10,6 +10,7 @@ from app.models.queue import Queue
 from app.schemas.business import BusinessCreate, BusinessUpdate, BusinessResponse
 from app.services.auth_service import get_db, require_role, get_current_user, get_current_user_business
 from app.services.email_service import send_activation_email
+from app.utils import unique_slug
 
 logger = logging.getLogger("virtual_queue")
 
@@ -64,10 +65,12 @@ def create_business(
     current_user: User = Depends(require_role(UserRole.ADMIN))
 ):
     """Create a new business (Admin only)."""
+    slug = unique_slug(db, business_data.name)
     business = Business(
         name=business_data.name,
         address=business_data.address,
-        phone=business_data.phone
+        phone=business_data.phone,
+        slug=slug
     )
     db.add(business)
     db.commit()
@@ -112,6 +115,7 @@ def update_business(
         if current_user.role != UserRole.ADMIN:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Managers cannot change the business name")
         business.name = business_data.name
+        business.slug = unique_slug(db, business_data.name, exclude_id=business_id)
     if business_data.address is not None:
         business.address = business_data.address
     if business_data.phone is not None:

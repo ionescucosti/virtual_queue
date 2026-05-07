@@ -9,7 +9,7 @@ from app.routers import auth, dashboard, business, queue, customer
 from app.websocket.handlers import router as ws_router
 from app.websocket.redis_pubsub import redis_pubsub
 from sqlalchemy import text
-from app.database import engine
+from app.database import engine, SessionLocal
 from app.models.user import Base
 from app.models.business import Business       # noqa: F401
 from app.models.queue import Queue             # noqa: F401
@@ -33,16 +33,39 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting application with log level: %s", log_level)
     Base.metadata.create_all(bind=engine)
-    # Safe migration: add assigned_queue_id column if not yet present
+    # Safe idempotent migrations
     with engine.connect() as conn:
         conn.execute(text(
             'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS '
             'assigned_queue_id INTEGER REFERENCES queue(id) ON DELETE SET NULL'
         ))
         conn.execute(text(
+            'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS '
+            'business_id INTEGER REFERENCES business(id) ON DELETE SET NULL'
+        ))
+        conn.execute(text(
             'ALTER TABLE business ADD COLUMN IF NOT EXISTS slug VARCHAR UNIQUE'
         ))
+        # Rename legacy OWNER role to MANAGER (cast to text to bypass enum check)
+        conn.execute(text(
+            "UPDATE \"user\" SET role = 'MANAGER' WHERE role::text = 'OWNER'"
+        ))
         conn.commit()
+
+    # Backfill slugs for existing businesses without one
+    from app.models.business import Business
+    from app.utils import unique_slug
+    db = SessionLocal()
+    try:
+        businesses_without_slug = db.query(Business).filter(Business.slug.is_(None)).all()
+        for biz in businesses_without_slug:
+            biz.slug = unique_slug(db, biz.name, exclude_id=biz.id)
+        if businesses_without_slug:
+            db.commit()
+            logger.info(f"Backfilled slugs for {len(businesses_without_slug)} businesses")
+    finally:
+        db.close()
+
     await redis_pubsub.connect()
     await redis_pubsub.start_listener()
     yield

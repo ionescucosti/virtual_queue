@@ -1,10 +1,18 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { Layout } from '../components/Layout'
 import { apiHelpers } from '../services/api'
 import { useWebSocketStore } from '../store'
+
+interface Business {
+  id: number
+  name: string
+  address: string
+  phone: string
+  slug: string | null
+}
 
 interface Queue {
   id: number
@@ -34,8 +42,9 @@ export function QueueDetailPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { sendAnnouncement } = useWebSocket(undefined, true)
-  const { queueCounts, queueStatuses, queueEntriesVersion, queuePatches } = useWebSocketStore()
+  const { queueCounts, queueStatuses, queueEntriesVersion } = useWebSocketStore()
 
+  const [business, setBusiness] = useState<Business | null>(null)
   const [queue, setQueue] = useState<Queue | null>(null)
   const [entries, setEntries] = useState<QueueEntry[]>([])
   const [todayStats, setTodayStats] = useState<DayStats | null>(null)
@@ -44,8 +53,8 @@ export function QueueDetailPage() {
   const [announcementSent, setAnnouncementSent] = useState(false)
   const announcementTimer = useRef<number | null>(null)
 
-  const liveName = queue ? (queuePatches[queue.id]?.name ?? queue.name) : ''
-  const liveMaxBar = queue ? (queuePatches[queue.id]?.max_bar_capacity ?? queue.max_bar_capacity) : 0
+  const liveName = queue ? queue.name : ''
+  const liveMaxBar = queue ? queue.max_bar_capacity : 0
   const isActive = queue ? (queueStatuses[queue.id] ?? queue.is_active) : false
   const liveWaiting = queue ? (queueCounts[queue.id] ?? queue.current_waiting) : 0
 
@@ -54,9 +63,19 @@ export function QueueDetailPage() {
   const atTableEntries = waitingEntries.filter((_, i) => i >= liveMaxBar - atBarEntries.length)
 
   useEffect(() => {
+    loadBusiness()
     loadQueue()
     loadTodayStats()
   }, [queueId])
+
+  const loadBusiness = async () => {
+    try {
+      const data = await apiHelpers.get(`/api/businesses/${businessId}`)
+      setBusiness(data)
+    } catch (e) {
+      console.error('Error loading business:', e)
+    }
+  }
 
   useEffect(() => {
     if (queue && isActive) loadEntries()
@@ -164,6 +183,20 @@ export function QueueDetailPage() {
   return (
     <Layout>
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+
+        {/* Business details */}
+        {business && (
+          <div className="bg-white rounded-xl shadow-sm p-5">
+            <div className="flex items-start justify-between gap-6">
+              <div className="flex-1">
+                <h2 className="text-lg font-bold text-gray-900">{business.name}</h2>
+                <p className="text-sm text-gray-500 mt-1">{business.address}</p>
+                <p className="text-sm text-gray-500">{business.phone}</p>
+              </div>
+              <QRCodeCard businessId={String(business.id)} businessName={business.name} businessSlug={business.slug} />
+            </div>
+          </div>
+        )}
 
         {/* Back + header */}
         <div>
@@ -374,7 +407,92 @@ export function QueueDetailPage() {
         </div>
 
       </div>
+
     </Layout>
+  )
+}
+
+function QRCodeCard({ businessId, businessName, businessSlug }: { businessId: string; businessName: string; businessSlug: string | null }) {
+  const [copied, setCopied] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [publicBase, setPublicBase] = useState<string | null>(null)
+  const copiedTimer = useRef<number | null>(null)
+
+  useEffect(() => {
+    fetch('/api/public/config')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.public_url) setPublicBase(data.public_url) })
+      .catch(() => {})
+  }, [])
+
+  const baseUrl = publicBase ?? window.location.origin
+  // Use slug for friendly URL if available, fall back to ID-based URL
+  const joinUrl = businessSlug
+    ? `${baseUrl}/${businessSlug}`
+    : `${baseUrl}/join/${businessId}`
+  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=10&data=${encodeURIComponent(joinUrl)}`
+
+  const handleDownload = useCallback(async () => {
+    setDownloading(true)
+    try {
+      const res = await fetch(qrImageUrl)
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = `${businessName.replace(/\s+/g, '-').toLowerCase()}-qr.png`
+      link.click()
+      URL.revokeObjectURL(objectUrl)
+    } catch {
+      window.open(qrImageUrl, '_blank')
+    } finally {
+      setDownloading(false)
+    }
+  }, [qrImageUrl, businessName])
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(joinUrl)
+    } catch {
+      prompt('Copy this link:', joinUrl)
+      return
+    }
+    setCopied(true)
+    if (copiedTimer.current) clearTimeout(copiedTimer.current)
+    copiedTimer.current = window.setTimeout(() => setCopied(false), 2000)
+  }, [joinUrl])
+
+  return (
+    <div className="flex flex-col items-center gap-3 w-52 shrink-0">
+      <div className="text-center">
+        <p className="text-sm font-semibold text-gray-700">Customer QR Code</p>
+        <p className="text-xs text-gray-400 mt-0.5">Scan to join the queue</p>
+      </div>
+
+      <div className="p-2 bg-gray-50 rounded-xl border border-gray-100">
+        <img src={qrImageUrl} alt="QR code" width={160} height={160} className="rounded" />
+      </div>
+
+      <div className="flex gap-2 w-full">
+        <button
+          onClick={handleDownload}
+          disabled={downloading}
+          className="flex-1 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-60 transition-colors font-medium"
+        >
+          {downloading ? '…' : 'Download'}
+        </button>
+        <button
+          onClick={handleCopy}
+          className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-colors font-medium border ${
+            copied
+              ? 'bg-green-50 text-green-700 border-green-200'
+              : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+          }`}
+        >
+          {copied ? 'Copied!' : 'Copy Link'}
+        </button>
+      </div>
+    </div>
   )
 }
 

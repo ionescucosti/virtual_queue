@@ -74,7 +74,7 @@ class WebSocketService {
 
   private handleMessage(data: any) {
     const { addNotification } = useNotificationStore.getState()
-    const { setConnected, setQueueId, setQueueCount, setQueueStatus } = useWebSocketStore.getState()
+    const { setConnected, setQueueId, setQueueCount, setQueueStatus, incrementEntriesVersion } = useWebSocketStore.getState()
 
     switch (data.type) {
       case 'connected':
@@ -119,6 +119,10 @@ class WebSocketService {
 
       case 'queue_status_update':
         setQueueStatus(data.queue_id, data.is_active)
+        break
+
+      case 'queue_entries_changed':
+        incrementEntriesVersion(data.queue_id)
         break
 
       case 'pong':

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNotificationStore, Notification } from '../../store'
+import { useNotificationStore, Notification } from '../store'
 
 export function NotificationToast() {
   const { notifications, markAsRead } = useNotificationStore()

@@ -1,7 +1,7 @@
 import { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { useWebSocketStore } from '../store'
+import { useAuthStore } from '../store'
 import { NotificationBell, NotificationToast } from './Notification'
 
 interface LayoutProps {
@@ -10,7 +10,7 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   const { user, logout } = useAuth()
-  const { isConnected } = useWebSocketStore()
+  const { isAuthenticated } = useAuthStore()
 
   const roleColors = {
     ADMIN: 'bg-red-500',
@@ -40,9 +40,9 @@ export function Layout({ children }: LayoutProps) {
             )}
             {/* Connection status */}
             <div className="flex items-center gap-1">
-              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <div className={`w-2 h-2 rounded-full ${isAuthenticated ? 'bg-green-500' : 'bg-red-500'}`}></div>
               <span className="text-xs text-gray-500 hidden sm:inline">
-                {isConnected ? 'Connected' : 'Offline'}
+                {isAuthenticated ? 'Connected' : 'Offline'}
               </span>
             </div>
 
