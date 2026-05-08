@@ -70,11 +70,22 @@ def update_schema():
         """))
         print("  - Ensured 'assigned_queue_id' column exists")
 
-        # Rename role enum value OWNER -> MANAGER
+        # Add pinned_message to queue
         conn.execute(text("""
-            UPDATE "user" SET role = 'MANAGER' WHERE role = 'OWNER'
+            ALTER TABLE queue
+            ADD COLUMN IF NOT EXISTS pinned_message VARCHAR
         """))
-        print("  - Migrated role OWNER -> MANAGER")
+        print("  - Ensured 'pinned_message' column exists on queue")
+
+        # Rename role enum value OWNER -> MANAGER (no-op if enum no longer has OWNER)
+        try:
+            conn.execute(text("""
+                UPDATE "user" SET role = 'MANAGER' WHERE role = 'OWNER'
+            """))
+            print("  - Migrated role OWNER -> MANAGER")
+        except Exception:
+            conn.rollback()
+            print("  - Skipped OWNER -> MANAGER migration (already applied)")
 
         conn.commit()
         print("✅ Idempotent migrations done.")

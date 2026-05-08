@@ -20,6 +20,14 @@ export function useWebSocket(queueId?: string, asStaff = false) {
     wsService.sendAnnouncement(targetQueueId, message)
   }, [])
 
+  const sendNotify = useCallback((targetQueueId: string, message: string) => {
+    wsService.sendNotify(targetQueueId, message)
+  }, [])
+
+  const clearAnnouncement = useCallback((targetQueueId: string) => {
+    wsService.clearAnnouncement(targetQueueId)
+  }, [])
+
   const callCustomer = useCallback((customerId: string | number, message?: string) => {
     wsService.callCustomer(customerId, message)
   }, [])
@@ -33,6 +41,8 @@ export function useWebSocket(queueId?: string, asStaff = false) {
     connectionId,
     subscribeToQueue,
     sendAnnouncement,
+    sendNotify,
+    clearAnnouncement,
     callCustomer,
     disconnect,
   }

@@ -11,6 +11,7 @@ from app.models.business import Business
 from app.models.queue import Queue
 from app.models.queue_session import QueueSession
 from app.models.queue_entry import QueueEntry, EntryStatus
+from app.models.pinned_message_template import PinnedMessageTemplate
 from app.services.auth_service import get_db, require_role, get_current_user
 from app.websocket.manager import manager
 
@@ -35,6 +36,24 @@ class QueueResponse(BaseModel):
     max_bar_capacity: int
     current_waiting: int
     is_active: bool
+    pinned_message: str | None = None
+    business_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class PinnedMessageBody(BaseModel):
+    message: str = Field(..., min_length=1, max_length=500)
+
+
+class TemplateCreate(BaseModel):
+    message: str = Field(..., min_length=1, max_length=500)
+
+
+class TemplateResponse(BaseModel):
+    id: int
+    message: str
     business_id: int
 
     class Config:
@@ -42,11 +61,11 @@ class QueueResponse(BaseModel):
 
 
 class WaitingUpdate(BaseModel):
-    action: Literal["join", "leave", "call", "serve"]
+    action: Literal["join", "leave", "call", "serve", "skip"]
     # Anonymous device UUID generated in the customer's browser (localStorage).
     # Stored as SHA-256 hash — no personal data, GDPR-safe.
     customer_token: str | None = None   # required for "join"
-    entry_id: int | None = None         # required for leave / call / serve
+    entry_id: int | None = None         # required for leave / call / serve / skip
 
 
 class EntryResponse(BaseModel):
@@ -58,6 +77,7 @@ class EntryResponse(BaseModel):
     joined_at: datetime
     called_at: datetime | None
     served_at: datetime | None
+    skipped_at: datetime | None
     left_at: datetime | None
 
     class Config:
@@ -255,8 +275,8 @@ async def update_waiting(
     Track customer lifecycle inside a queue (Admin can access any, MANAGER/STAFF only their assigned business).
 
     - join:  creates a QueueEntry, returns position + entry_id
-    - call:  moves entry to AT_BAR (customer called to the physical counter)
-    - serve: marks entry SERVED (order taken / customer done)
+    - call:  auto-serves all AT_BAR entries, then moves the specified entry to AT_BAR
+    - skip:  marks AT_BAR entry as SKIPPED, then calls next waiting customer
     - leave: marks entry LEFT (customer abandoned the queue)
 
     customer_token is a client-generated UUID (stored in browser localStorage).
@@ -291,7 +311,7 @@ async def update_waiting(
         db.commit()
         db.refresh(entry)
 
-    else:
+    elif body.action == "call":
         if not body.entry_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="entry_id required")
 
@@ -299,18 +319,99 @@ async def update_waiting(
         if not entry:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")
 
-        if body.action == "call":
-            entry.status = EntryStatus.AT_BAR
-            entry.called_at = now
-        elif body.action == "serve":
-            entry.status = EntryStatus.SERVED
-            entry.served_at = now
-            queue.current_waiting = max(0, queue.current_waiting - 1)
-        elif body.action == "leave":
-            entry.status = EntryStatus.LEFT
-            entry.left_at = now
+        # Auto-serve all currently AT_BAR entries before calling the new one
+        at_bar_entries = db.query(QueueEntry).filter(
+            QueueEntry.queue_id == queue_id,
+            QueueEntry.status == EntryStatus.AT_BAR
+        ).all()
+        for bar_entry in at_bar_entries:
+            bar_entry.status = EntryStatus.SERVED
+            bar_entry.served_at = now
             queue.current_waiting = max(0, queue.current_waiting - 1)
 
+        # Now call the new entry to the bar
+        entry.status = EntryStatus.AT_BAR
+        entry.called_at = now
+        db.commit()
+        db.refresh(entry)
+
+    elif body.action == "serve":
+        if not body.entry_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="entry_id required")
+
+        entry = db.query(QueueEntry).filter(QueueEntry.id == body.entry_id, QueueEntry.queue_id == queue_id).first()
+        if not entry:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")
+
+        # Mark the entry as served
+        entry.status = EntryStatus.SERVED
+        entry.served_at = now
+        queue.current_waiting = max(0, queue.current_waiting - 1)
+
+        # Find next WAITING customer and automatically call them
+        today = date.today()
+        session = db.query(QueueSession).filter(
+            QueueSession.queue_id == queue_id,
+            QueueSession.date == today
+        ).first()
+
+        if session:
+            next_waiting = db.query(QueueEntry).filter(
+                QueueEntry.session_id == session.id,
+                QueueEntry.status == EntryStatus.WAITING
+            ).order_by(QueueEntry.position).first()
+
+            if next_waiting:
+                next_waiting.status = EntryStatus.AT_BAR
+                next_waiting.called_at = now
+
+        db.commit()
+        db.refresh(entry)
+
+    elif body.action == "skip":
+        if not body.entry_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="entry_id required")
+
+        entry = db.query(QueueEntry).filter(QueueEntry.id == body.entry_id, QueueEntry.queue_id == queue_id).first()
+        if not entry:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")
+
+        # Mark the entry as skipped
+        entry.status = EntryStatus.SKIPPED
+        entry.skipped_at = now
+        queue.current_waiting = max(0, queue.current_waiting - 1)
+
+        # Find next WAITING customer and automatically call them
+        today = date.today()
+        session = db.query(QueueSession).filter(
+            QueueSession.queue_id == queue_id,
+            QueueSession.date == today
+        ).first()
+
+        if session:
+            next_waiting = db.query(QueueEntry).filter(
+                QueueEntry.session_id == session.id,
+                QueueEntry.status == EntryStatus.WAITING
+            ).order_by(QueueEntry.position).first()
+
+            if next_waiting:
+                next_waiting.status = EntryStatus.AT_BAR
+                next_waiting.called_at = now
+
+        db.commit()
+        db.refresh(entry)
+
+    elif body.action == "leave":
+        if not body.entry_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="entry_id required")
+
+        entry = db.query(QueueEntry).filter(QueueEntry.id == body.entry_id, QueueEntry.queue_id == queue_id).first()
+        if not entry:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")
+
+        entry.status = EntryStatus.LEFT
+        entry.left_at = now
+        queue.current_waiting = max(0, queue.current_waiting - 1)
         db.commit()
         db.refresh(entry)
 
@@ -396,6 +497,7 @@ def get_queue_analytics(
 
         total = len(entries)
         served = sum(1 for e in entries if e.status == EntryStatus.SERVED)
+        skipped = sum(1 for e in entries if e.status == EntryStatus.SKIPPED)
         abandoned = sum(1 for e in entries if e.status == EntryStatus.LEFT)
 
         wait_times = [
@@ -421,6 +523,7 @@ def get_queue_analytics(
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
             "total_joined": total,
             "served": served,
+            "skipped": skipped,
             "abandoned": abandoned,
             "abandonment_rate": round(abandoned / total * 100, 1) if total else 0,
             "avg_wait_minutes": avg_wait,
@@ -444,6 +547,139 @@ def get_queue_analytics(
         "repeat_visitors_last_90_days": repeat_count,
         "sessions": result,
     }
+
+
+@router.post("/{business_id}/queues/{queue_id}/notify", status_code=status.HTTP_204_NO_CONTENT)
+async def notify_queue(
+    business_id: int,
+    queue_id: int,
+    body: PinnedMessageBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Broadcast a temporary notification to all customers in a queue (disappears after 5 s)."""
+    _check_business_access(current_user, business_id)
+
+    queue = db.query(Queue).filter(Queue.id == queue_id, Queue.business_id == business_id).first()
+    if not queue:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue not found")
+
+    await manager.broadcast({
+        "type": "notification",
+        "queue_id": str(queue.id),
+        "message": body.message.strip(),
+    })
+
+    return None
+
+
+@router.put("/{business_id}/queues/{queue_id}/pinned-message", response_model=QueueResponse)
+async def set_pinned_message(
+    business_id: int,
+    queue_id: int,
+    body: PinnedMessageBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Set a persistent pinned message visible to all customers waiting in this queue."""
+    _check_business_access(current_user, business_id)
+
+    queue = db.query(Queue).filter(Queue.id == queue_id, Queue.business_id == business_id).first()
+    if not queue:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue not found")
+
+    queue.pinned_message = body.message.strip()
+    db.commit()
+    db.refresh(queue)
+
+    await manager.broadcast({
+        "type": "pinned_message_update",
+        "queue_id": str(queue.id),
+        "message": queue.pinned_message,
+    })
+
+    return queue
+
+
+@router.delete("/{business_id}/queues/{queue_id}/pinned-message", response_model=QueueResponse)
+async def clear_pinned_message(
+    business_id: int,
+    queue_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Remove the pinned message from a queue."""
+    _check_business_access(current_user, business_id)
+
+    queue = db.query(Queue).filter(Queue.id == queue_id, Queue.business_id == business_id).first()
+    if not queue:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue not found")
+
+    queue.pinned_message = None
+    db.commit()
+    db.refresh(queue)
+
+    await manager.broadcast({
+        "type": "pinned_message_update",
+        "queue_id": str(queue.id),
+        "message": None,
+    })
+
+    return queue
+
+
+@router.get("/{business_id}/pinned-message-templates", response_model=List[TemplateResponse])
+def list_pinned_message_templates(
+    business_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List pinned message templates for a business."""
+    _check_business_access(current_user, business_id)
+    return db.query(PinnedMessageTemplate).filter(PinnedMessageTemplate.business_id == business_id).all()
+
+
+@router.post("/{business_id}/pinned-message-templates", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
+def create_pinned_message_template(
+    business_id: int,
+    body: TemplateCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new pinned message template for a business."""
+    _check_business_access(current_user, business_id)
+
+    business = db.query(Business).filter(Business.id == business_id).first()
+    if not business:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
+
+    template = PinnedMessageTemplate(message=body.message.strip(), business_id=business_id)
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return template
+
+
+@router.delete("/{business_id}/pinned-message-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_pinned_message_template(
+    business_id: int,
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a pinned message template."""
+    _check_business_access(current_user, business_id)
+
+    template = db.query(PinnedMessageTemplate).filter(
+        PinnedMessageTemplate.id == template_id,
+        PinnedMessageTemplate.business_id == business_id
+    ).first()
+    if not template:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    db.delete(template)
+    db.commit()
+    return None
 
 
 @router.delete("/{business_id}/queues/{queue_id}", status_code=status.HTTP_204_NO_CONTENT)

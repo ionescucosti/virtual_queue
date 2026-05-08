@@ -15,6 +15,7 @@ from app.models.business import Business       # noqa: F401
 from app.models.queue import Queue             # noqa: F401
 from app.models.queue_session import QueueSession  # noqa: F401
 from app.models.queue_entry import QueueEntry      # noqa: F401
+from app.models.pinned_message_template import PinnedMessageTemplate  # noqa: F401
 
 # Load environment variables from .env file
 load_dotenv()
@@ -45,6 +46,18 @@ async def lifespan(app: FastAPI):
         ))
         conn.execute(text(
             'ALTER TABLE business ADD COLUMN IF NOT EXISTS slug VARCHAR UNIQUE'
+        ))
+        # Add SKIPPED status to the entrystatus enum if it doesn't exist
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'SKIPPED' AND enumtypid = 'entrystatus'::regtype) THEN
+                    ALTER TYPE entrystatus ADD VALUE IF NOT EXISTS 'SKIPPED';
+                END IF;
+            END$$;
+        """))
+        conn.execute(text(
+            'ALTER TABLE queue_entry ADD COLUMN IF NOT EXISTS skipped_at TIMESTAMP WITH TIME ZONE'
         ))
         # Rename legacy OWNER role to MANAGER (cast to text to bypass enum check)
         conn.execute(text(

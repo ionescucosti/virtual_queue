@@ -293,6 +293,7 @@ def get_my_position(
         "place_in_line": place_in_line,
         "queue_name": queue.name,
         "queue_is_active": queue.is_active,
+        "pinned_message": queue.pinned_message,
     }
 
 

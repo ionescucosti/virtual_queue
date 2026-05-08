@@ -15,4 +15,5 @@ class Business(Base):
     # Relationships
     users = relationship("User", back_populates="business")
     queues = relationship("Queue", back_populates="business", cascade="all, delete-orphan")
+    pinned_message_templates = relationship("PinnedMessageTemplate", back_populates="business", cascade="all, delete-orphan")
 

@@ -13,12 +13,13 @@ class WebSocketService {
 
   connect(queueId?: string, asStaff = false) {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      console.log('[WS Service] Already connected/connecting')
       return
     }
 
     const token = useAuthStore.getState().token
     if (!token) {
-      console.error('No auth token available')
+      console.error('[WS Service] No auth token available')
       return
     }
 
@@ -28,12 +29,13 @@ class WebSocketService {
     if (queueId) params.append('queue_id', queueId)
 
     const wsUrl = `${WS_BASE_URL}${endpoint}?${params}`
+    console.log('[WS Service] Connecting to:', endpoint, 'asStaff:', asStaff)
 
     try {
       this.ws = new WebSocket(wsUrl)
       this.setupEventHandlers()
     } catch (error) {
-      console.error('WebSocket connection error:', error)
+      console.error('[WS Service] WebSocket connection error:', error)
       this.handleReconnect()
     }
   }
@@ -42,14 +44,14 @@ class WebSocketService {
     if (!this.ws) return
 
     this.ws.onopen = () => {
-      console.log('WebSocket connected')
+      console.log('[WS Service] WebSocket connected, isStaff:', this.isStaff)
       this.reconnectAttempts = 0
       useWebSocketStore.getState().setConnected(true)
       this.startPingInterval()
     }
 
     this.ws.onclose = (event) => {
-      console.log('WebSocket closed:', event.code, event.reason)
+      console.log('[WS Service] WebSocket closed:', event.code, event.reason)
       useWebSocketStore.getState().setConnected(false)
       this.stopPingInterval()
 
@@ -59,7 +61,7 @@ class WebSocketService {
     }
 
     this.ws.onerror = (error) => {
-      console.error('WebSocket error:', error)
+      console.error('[WS Service] WebSocket error:', error)
     }
 
     this.ws.onmessage = (event) => {
@@ -73,6 +75,7 @@ class WebSocketService {
   }
 
   private handleMessage(data: any) {
+    console.log('[WS Service] Received message:', data)
     const { addNotification } = useNotificationStore.getState()
     const { setConnected, setQueueId, setQueueCount, setQueueStatus, incrementEntriesVersion } = useWebSocketStore.getState()
 
@@ -168,8 +171,12 @@ class WebSocketService {
   }
 
   send(data: any) {
+    console.log('[WS Service] Attempting to send:', data)
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      console.log('[WS Service] Sending message')
       this.ws.send(JSON.stringify(data))
+    } else {
+      console.log('[WS Service] WebSocket not ready, state:', this.ws?.readyState)
     }
   }
 
@@ -185,6 +192,21 @@ class WebSocketService {
       type: 'announce',
       queue_id: queueId,
       message,
+    })
+  }
+
+  sendNotify(queueId: string, message: string) {
+    this.send({
+      type: 'notify',
+      queue_id: queueId,
+      message,
+    })
+  }
+
+  clearAnnouncement(queueId: string) {
+    this.send({
+      type: 'clear_announcement',
+      queue_id: queueId,
     })
   }
 

@@ -150,10 +150,10 @@ async def websocket_staff(
                         "queue_id": queue_id
                     }
 
-                    # Send via WebSocket manager
-                    await manager.send_to_queue(queue_id, announcement)
+                    # Broadcast to all connections; client filters by queue_id
+                    await manager.broadcast(announcement)
 
-                    # Also publish to Redis for scaling
+                    # Also publish to Redis for cross-instance delivery
                     await publish_to_queue(queue_id, announcement)
 
                     logger.info(f"Announcement to queue {queue_id}: {message}")
@@ -163,6 +163,32 @@ async def websocket_staff(
                         "queue_id": queue_id,
                         "recipients": manager.get_queue_connection_count(queue_id)
                     })
+
+            # Handle temporary notification (auto-dismissed on client after 5s)
+            elif data.get("type") == "notify":
+                queue_id = data.get("queue_id")
+                message = data.get("message")
+                if queue_id and message:
+                    notification = {
+                        "type": "notification",
+                        "queue_id": queue_id,
+                        "message": message,
+                    }
+                    await manager.broadcast(notification)
+                    await publish_to_queue(queue_id, notification)
+                    logger.info(f"Notification to queue {queue_id}: {message}")
+
+            # Handle clearing an active announcement
+            elif data.get("type") == "clear_announcement":
+                queue_id = data.get("queue_id")
+                if queue_id:
+                    clear_msg = {
+                        "type": "announcement_cleared",
+                        "queue_id": queue_id,
+                    }
+                    await manager.broadcast(clear_msg)
+                    await publish_to_queue(queue_id, clear_msg)
+                    logger.info(f"Announcement cleared for queue {queue_id}")
 
             # Handle calling specific customer
             elif data.get("type") == "call_customer":

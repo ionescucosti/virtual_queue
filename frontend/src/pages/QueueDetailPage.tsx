@@ -20,6 +20,7 @@ interface Queue {
   max_bar_capacity: number
   current_waiting: number
   is_active: boolean
+  pinned_message: string | null
   business_id: number
 }
 
@@ -34,6 +35,7 @@ interface QueueEntry {
 interface DayStats {
   total_joined: number
   served: number
+  skipped: number
   abandoned: number
 }
 
@@ -41,7 +43,7 @@ export function QueueDetailPage() {
   const { businessId, queueId } = useParams<{ businessId: string; queueId: string }>()
   const navigate = useNavigate()
   const { user } = useAuth()
-  const { sendAnnouncement } = useWebSocket(undefined, true)
+  useWebSocket(undefined, true)
   const { queueCounts, queueStatuses, queueEntriesVersion } = useWebSocketStore()
 
   const [business, setBusiness] = useState<Business | null>(null)
@@ -49,11 +51,14 @@ export function QueueDetailPage() {
   const [entries, setEntries] = useState<QueueEntry[]>([])
   const [todayStats, setTodayStats] = useState<DayStats | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [announcement, setAnnouncement] = useState('')
-  const [announcementSent, setAnnouncementSent] = useState(false)
-  const announcementTimer = useRef<number | null>(null)
   const [editingMaxBar, setEditingMaxBar] = useState(false)
   const [maxBarInput, setMaxBarInput] = useState('')
+  const [pinnedSelection, setPinnedSelection] = useState<string>('')
+  const [pinnedCustomInput, setPinnedCustomInput] = useState('')
+  const [pinnedSelection2, setPinnedSelection2] = useState<string>('')
+  const [pinnedCustomInput2, setPinnedCustomInput2] = useState('')
+  const [pinnedSaving, setPinnedSaving] = useState(false)
+  const [templates, setTemplates] = useState<{ id: number; message: string }[]>([])
 
   const liveName = queue ? queue.name : ''
   const liveMaxBar = queue ? queue.max_bar_capacity : 0
@@ -68,6 +73,7 @@ export function QueueDetailPage() {
     loadBusiness()
     loadQueue()
     loadTodayStats()
+    loadTemplates()
   }, [queueId])
 
   const loadBusiness = async () => {
@@ -119,11 +125,21 @@ export function QueueDetailPage() {
         setTodayStats({
           total_joined: todaySession.total_joined,
           served: todaySession.served,
+          skipped: todaySession.skipped,
           abandoned: todaySession.abandoned,
         })
       }
     } catch (e) {
       console.error('Error loading stats:', e)
+    }
+  }
+
+  const loadTemplates = async () => {
+    try {
+      const data = await apiHelpers.get(`/api/businesses/${businessId}/pinned-message-templates`)
+      setTemplates(data)
+    } catch (e) {
+      console.error('Error loading templates:', e)
     }
   }
 
@@ -138,7 +154,7 @@ export function QueueDetailPage() {
     }
   }
 
-  const handleAction = async (action: 'call' | 'serve', entryId: number) => {
+  const handleAction = async (action: 'call' | 'serve' | 'skip', entryId: number) => {
     try {
       await apiHelpers.patch(`/api/businesses/${businessId}/queues/${queueId}/waiting`, { action, entry_id: entryId })
       await loadEntries()
@@ -149,14 +165,57 @@ export function QueueDetailPage() {
     }
   }
 
-  const handleSendAnnouncement = () => {
-    if (!announcement.trim() || !queue) return
-    sendAnnouncement(String(queue.id), announcement.trim())
-    setAnnouncement('')
-    setAnnouncementSent(true)
-    if (announcementTimer.current) clearTimeout(announcementTimer.current)
-    announcementTimer.current = window.setTimeout(() => setAnnouncementSent(false), 3000)
+  const resolveMessage = (selection: string, customInput: string) =>
+    selection === 'custom' ? customInput.trim() : selection
+
+  const handleNotify = async (selection: string, customInput: string) => {
+    if (!queue) return
+    const message = resolveMessage(selection, customInput)
+    if (!message) return
+    try {
+      await apiHelpers.post(`/api/businesses/${businessId}/queues/${queueId}/notify`, { message })
+    } catch (e) {
+      console.error('Error sending notification:', e)
+    }
   }
+
+  const handlePinMessage = async (selection: string, customInput: string) => {
+    if (!queue) return
+    const message = resolveMessage(selection, customInput)
+    if (!message) return
+    setPinnedSaving(true)
+    try {
+      const updated = await apiHelpers.put(
+        `/api/businesses/${businessId}/queues/${queueId}/pinned-message`,
+        { message }
+      )
+      setQueue(updated)
+      setPinnedSelection('')
+      setPinnedCustomInput('')
+      setPinnedSelection2('')
+      setPinnedCustomInput2('')
+    } catch (e) {
+      console.error('Error pinning message:', e)
+      alert('Failed to pin message')
+    } finally {
+      setPinnedSaving(false)
+    }
+  }
+
+  const handleClearPinnedMessage = async () => {
+    if (!queue) return
+    setPinnedSaving(true)
+    try {
+      const updated = await apiHelpers.delete(`/api/businesses/${businessId}/queues/${queueId}/pinned-message`)
+      setQueue(updated)
+    } catch (e) {
+      console.error('Error clearing pinned message:', e)
+      alert('Failed to remove pinned message')
+    } finally {
+      setPinnedSaving(false)
+    }
+  }
+
 
   const handleSaveMaxBar = async () => {
     const val = parseInt(maxBarInput, 10)
@@ -278,7 +337,7 @@ export function QueueDetailPage() {
 
         {(isActive || entries.length > 0) && (<>
           {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <StatCard
               label="At bar"
               value={atBarEntries.length}
@@ -298,18 +357,131 @@ export function QueueDetailPage() {
               color="purple"
             />
             <StatCard
+              label="Skipped"
+              value={todayStats?.skipped ?? '—'}
+              sub="no-shows"
+              color="orange"
+            />
+            <StatCard
               label="Left early"
               value={todayStats?.abandoned ?? '—'}
               sub={todayStats && todayStats.total_joined > 0
                 ? `${Math.round(todayStats.abandoned / todayStats.total_joined * 100)}% rate`
                 : ''}
-              color="orange"
+              color="red"
             />
+          </div>
+
+          {/* Pinned message — persistent banner shown to all waiting customers */}
+          <div className="bg-white rounded-xl shadow-sm p-6 space-y-3">
+            <h2 className="text-lg font-bold text-gray-900">Message</h2>
+
+            {/* Row 1 — Announce only */}
+            <div className="flex gap-3 items-center">
+              {queue?.pinned_message ? (
+                <div className="flex-1 bg-amber-50 border border-amber-300 rounded-lg px-4 py-2.5 flex gap-2 items-center">
+                  <span className="flex-shrink-0">📌</span>
+                  <p className="text-amber-900 text-sm font-medium truncate">{queue.pinned_message}</p>
+                </div>
+              ) : (
+                <select
+                  value={pinnedSelection2}
+                  onChange={e => { setPinnedSelection2(e.target.value); setPinnedCustomInput2('') }}
+                  className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none text-sm bg-white"
+                >
+                  <option value="">— Select a message —</option>
+                  {templates.map(t => (
+                    <option key={t.id} value={t.message}>{t.message}</option>
+                  ))}
+                  <option value="custom">Custom message…</option>
+                </select>
+              )}
+              <button
+                onClick={queue?.pinned_message ? handleClearPinnedMessage : () => handlePinMessage(pinnedSelection2, pinnedCustomInput2)}
+                disabled={pinnedSaving || (!queue?.pinned_message && (!pinnedSelection2 || (pinnedSelection2 === 'custom' && !pinnedCustomInput2.trim())))}
+                className="px-4 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium flex-shrink-0"
+              >
+                {pinnedSaving ? '…' : queue?.pinned_message ? 'Remove' : 'Announce'}
+              </button>
+            </div>
+            {!queue?.pinned_message && pinnedSelection2 === 'custom' && (
+              <input
+                type="text"
+                value={pinnedCustomInput2}
+                onChange={e => setPinnedCustomInput2(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handlePinMessage(pinnedSelection2, pinnedCustomInput2)}
+                placeholder="Type your custom message…"
+                maxLength={500}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none text-sm"
+              />
+            )}
+
+            {/* Row 2 — Notify only */}
+            <div className="flex gap-3 items-center">
+              <select
+                value={pinnedSelection}
+                onChange={e => { setPinnedSelection(e.target.value); setPinnedCustomInput('') }}
+                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm bg-white"
+              >
+                <option value="">— Select a message —</option>
+                {templates.map(t => (
+                  <option key={t.id} value={t.message}>{t.message}</option>
+                ))}
+                <option value="custom">Custom message…</option>
+              </select>
+              <button
+                onClick={() => handleNotify(pinnedSelection, pinnedCustomInput)}
+                disabled={!pinnedSelection || (pinnedSelection === 'custom' && !pinnedCustomInput.trim())}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium flex-shrink-0"
+              >
+                Notify
+              </button>
+            </div>
+            {pinnedSelection === 'custom' && (
+              <input
+                type="text"
+                value={pinnedCustomInput}
+                onChange={e => setPinnedCustomInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleNotify(pinnedSelection, pinnedCustomInput)}
+                placeholder="Type your custom message…"
+                maxLength={500}
+                autoFocus
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
+              />
+            )}
           </div>
 
           {/* Queue management */}
           <div className="bg-white rounded-xl shadow-sm p-6 space-y-6">
-            <h2 className="text-lg font-bold text-gray-900">Queue Management</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">Queue Management</h2>
+              
+              {/* Action buttons - always visible */}
+              {canManage && (
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      if (atBarEntries.length > 0) {
+                        handleAction('serve', atBarEntries[0].id)
+                      } else if (waitingEntries.length > 0) {
+                        handleAction('call', waitingEntries[0].id)
+                      }
+                    }}
+                    disabled={atBarEntries.length === 0 && waitingEntries.length === 0}
+                    className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium"
+                  >
+                    Call Next →
+                  </button>
+                  <button
+                    onClick={() => atBarEntries[0] && handleAction('skip', atBarEntries[0].id)}
+                    disabled={atBarEntries.length === 0}
+                    className="px-4 py-2 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium"
+                  >
+                    Skip
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* At bar */}
             <div>
@@ -322,20 +494,15 @@ export function QueueDetailPage() {
                 <div className="space-y-2">
                   {atBarEntries.map(e => (
                     <div key={e.id} className="flex items-center justify-between bg-green-50 border border-green-100 rounded-lg px-4 py-3">
-                      <div>
+                      <div className="flex items-center gap-3">
                         <span className="font-semibold text-green-700">#{e.position}</span>
-                        <span className="text-xs text-gray-400 ml-3">
-                          called {e.called_at ? new Date(e.called_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-600">
+                          being served
                         </span>
                       </div>
-                      {canManage && (
-                        <button
-                          onClick={() => handleAction('serve', e.id)}
-                          className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
-                        >
-                          Mark Served
-                        </button>
-                      )}
+                      <span className="text-xs text-gray-400">
+                        called {e.called_at ? new Date(e.called_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -344,19 +511,9 @@ export function QueueDetailPage() {
 
             {/* Waiting */}
             <div>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-gray-700">
-                  Waiting ({waitingEntries.length})
-                </h3>
-                {canManage && waitingEntries.length > 0 && atBarEntries.length < liveMaxBar && (
-                  <button
-                    onClick={() => handleAction('call', waitingEntries[0].id)}
-                    className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                  >
-                    Call Next →
-                  </button>
-                )}
-              </div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                Waiting ({waitingEntries.length})
+              </h3>
               {waitingEntries.length === 0 ? (
                 <p className="text-sm text-gray-400 py-2">No customers waiting.</p>
               ) : (
@@ -395,51 +552,6 @@ export function QueueDetailPage() {
 
         </>)}
 
-        {/* Broadcast announcement — only available while queue is accepting new customers */}
-        {isActive && (
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-1">Broadcast Message</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              Send an instant message to all customers currently waiting in this queue.
-            </p>
-
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                {QUICK_MESSAGES.map(msg => (
-                  <button
-                    key={msg}
-                    onClick={() => setAnnouncement(msg)}
-                    className="px-3 py-1.5 text-xs bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
-                  >
-                    {msg}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  value={announcement}
-                  onChange={e => setAnnouncement(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleSendAnnouncement()}
-                  placeholder="Type a message to all waiting customers…"
-                  className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
-                />
-                <button
-                  onClick={handleSendAnnouncement}
-                  disabled={!announcement.trim()}
-                  className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm font-medium"
-                >
-                  Send
-                </button>
-              </div>
-
-              {announcementSent && (
-                <p className="text-sm text-green-600 font-medium">Message sent to all waiting customers.</p>
-              )}
-            </div>
-          </div>
-        )}
 
       </div>
 
@@ -460,7 +572,15 @@ function QRCodeCard({ businessId, businessName, businessSlug }: { businessId: st
       .catch(() => {})
   }, [])
 
-  const baseUrl = publicBase ?? window.location.origin
+  const baseUrl = (() => {
+    if (!publicBase) return window.location.origin
+    try {
+      const host = new URL(publicBase).hostname
+      const isPrivate = /^(localhost$|127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/i.test(host)
+      if (isPrivate) return window.location.origin
+    } catch { /* malformed URL */ }
+    return publicBase
+  })()
   // Use slug for friendly URL if available, fall back to ID-based URL
   const joinUrl = businessSlug
     ? `${baseUrl}/${businessSlug}`
@@ -531,14 +651,6 @@ function QRCodeCard({ businessId, businessName, businessSlug }: { businessId: st
   )
 }
 
-const QUICK_MESSAGES = [
-  'Cash only — no card payments',
-  'Temporary delay, please wait',
-  'Last orders in 15 minutes',
-  'No more beer available',
-  'Please evacuate the building',
-]
-
 function StatCard({
   label,
   value,
@@ -548,10 +660,10 @@ function StatCard({
   label: string
   value: number | string
   sub: string
-  color: 'green' | 'blue' | 'purple' | 'orange'
+  color: 'green' | 'blue' | 'purple' | 'orange' | 'red'
 }) {
-  const bg = { green: 'bg-green-50', blue: 'bg-blue-50', purple: 'bg-purple-50', orange: 'bg-orange-50' }
-  const text = { green: 'text-green-600', blue: 'text-blue-600', purple: 'text-purple-600', orange: 'text-orange-600' }
+  const bg = { green: 'bg-green-50', blue: 'bg-blue-50', purple: 'bg-purple-50', orange: 'bg-orange-50', red: 'bg-red-50' }
+  const text = { green: 'text-green-600', blue: 'text-blue-600', purple: 'text-purple-600', orange: 'text-orange-600', red: 'text-red-600' }
 
   return (
     <div className={`${bg[color]} rounded-xl p-4`}>
