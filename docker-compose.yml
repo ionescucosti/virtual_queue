@@ -64,6 +64,7 @@ services:
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8000}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       PUBLIC_URL: ${PUBLIC_URL:-}
+      ENVIRONMENT: development
       LOG_LEVEL: INFO
     ports:
       - "8000:8000"  # Remove in production
@@ -92,8 +93,8 @@ services:
   # Cloudflare Tunnel — exposes the app publicly without port-forwarding.
   # Creates a free HTTPS tunnel to http://frontend:3000 (Vite dev proxy handles /api and /ws).
   # Usage: docker compose --profile tunnel up
-  # Get the public URL: docker compose logs cloudflared | grep trycloudflare
-  # Or set PUBLIC_URL in .env to use your own stable URL (ngrok, etc.) instead.
+  # The PUBLIC_URL is auto-discovered via cloudflared metrics API - no manual config needed!
+  # Get the current URL: curl localhost:8000/api/public/config
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped

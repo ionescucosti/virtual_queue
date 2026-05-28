@@ -16,6 +16,7 @@ from app.models.queue_session import QueueSession
 from app.models.queue_entry import QueueEntry, EntryStatus
 from app.services.auth_service import get_db
 from app.websocket.manager import manager
+from app.websocket.redis_pubsub import get_notifications
 
 router = APIRouter(prefix="/api/public", tags=["Customer"])
 
@@ -302,19 +303,22 @@ def get_public_config():
     """
     Returns the public-facing base URL for customer QR codes.
 
-    Priority:
-      1. PUBLIC_URL env var (set manually for stable URLs — local IP, ngrok, cloud, etc.)
-      2. cloudflared quick-tunnel URL (auto-discovered when running with --profile tunnel)
-      3. null  (frontend falls back to window.location.origin)
+    Priority depends on ENVIRONMENT:
+      - development (default): cloudflared auto-discovery first, then PUBLIC_URL fallback
+      - production: PUBLIC_URL only (cloudflared not used)
     """
-    # 1. Manual PUBLIC_URL env var takes priority
+    environment = os.getenv("ENVIRONMENT", "development").lower()
     public_url = os.getenv("PUBLIC_URL", "").strip()
-    if public_url:
-        return {"public_url": public_url.rstrip("/"), "source": "env"}
 
-    # 2. Try cloudflared quick-tunnel metrics API (only works inside Docker network)
+    if environment == "production":
+        # Production: use PUBLIC_URL from .env (required for stable domains)
+        if public_url:
+            return {"public_url": public_url.rstrip("/"), "source": "env"}
+        return {"public_url": None, "source": "none"}
+
+    # Development: auto-discover from cloudflared tunnel first
     try:
-        with urllib.request.urlopen("http://cloudflared:8080/quicktunnel", timeout=1) as resp:
+        with urllib.request.urlopen("http://cloudflared:8080/quicktunnel", timeout=2) as resp:
             data = json.loads(resp.read())
             url = data.get("url") or data.get("hostname")
             if url:
@@ -324,5 +328,35 @@ def get_public_config():
     except Exception:
         pass
 
+    # Fallback to PUBLIC_URL if cloudflared is not available
+    if public_url:
+        return {"public_url": public_url.rstrip("/"), "source": "env"}
 
     return {"public_url": None, "source": "none"}
+
+
+@router.get("/queues/{queue_id}/notifications")
+async def get_queue_notifications(
+    queue_id: int,
+    since: int = Query(0, description="Timestamp in milliseconds to fetch notifications since"),
+):
+    """
+    HTTP fallback endpoint for fetching notifications when WebSocket is unavailable.
+    Returns notifications (announcements, etc.) for a queue since a given timestamp.
+    
+    This is a fallback for devices where WebSocket connections are unreliable (e.g., iOS Safari).
+    """
+    import time
+    notifications = await get_notifications(str(queue_id), since)
+
+    # Return the max timestamp from notifications (for proper pagination)
+    # If no notifications, return the since value to avoid re-fetching
+    if notifications:
+        max_ts = max(n.get("timestamp", 0) for n in notifications)
+    else:
+        max_ts = since if since > 0 else int(time.time() * 1000)
+
+    return {
+        "notifications": notifications,
+        "timestamp": max_ts
+    }

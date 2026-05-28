@@ -126,3 +126,75 @@ async def publish_broadcast(message: dict):
     """Publish a broadcast message to all."""
     await redis_pubsub.publish(CHANNEL_BROADCAST, message)
 
+
+# ── Notification storage for HTTP fallback ────────────────────────────────────
+
+NOTIFICATIONS_KEY_PREFIX = "notifications:"  # notifications:{queue_id}
+NOTIFICATION_TTL = 60  # seconds - notifications expire after 60s
+
+async def store_notification(queue_id: str, notification: dict):
+    """Store a notification in Redis for HTTP fallback polling."""
+    if not redis_pubsub.redis:
+        return
+
+    key = f"{NOTIFICATIONS_KEY_PREFIX}{queue_id}"
+    try:
+        # Add timestamp if not present
+        if "timestamp" not in notification:
+            import time
+            notification["timestamp"] = int(time.time() * 1000)
+
+        # Store as JSON in a sorted set (score = timestamp)
+        await redis_pubsub.redis.zadd(
+            key,
+            {json.dumps(notification): notification["timestamp"]}
+        )
+        # Set TTL on the key
+        await redis_pubsub.redis.expire(key, NOTIFICATION_TTL * 2)
+
+        # Remove old notifications (older than TTL)
+        cutoff = notification["timestamp"] - (NOTIFICATION_TTL * 1000)
+        await redis_pubsub.redis.zremrangebyscore(key, "-inf", cutoff)
+
+    except Exception as e:
+        logger.error(f"Error storing notification: {e}")
+
+
+async def get_notifications(queue_id: str, since_timestamp: int = 0) -> list[dict]:
+    """Get notifications for a queue since a given timestamp."""
+    if not redis_pubsub.redis:
+        return []
+
+    key = f"{NOTIFICATIONS_KEY_PREFIX}{queue_id}"
+    try:
+        # Get notifications newer than since_timestamp
+        items = await redis_pubsub.redis.zrangebyscore(
+            key, since_timestamp + 1, "+inf"
+        )
+        return [json.loads(item) for item in items]
+    except Exception as e:
+        logger.error(f"Error getting notifications: {e}")
+        return []
+
+
+async def clear_notifications(queue_id: str, notification_type: str = None):
+    """Clear notifications for a queue (optionally by type)."""
+    if not redis_pubsub.redis:
+        return
+
+    key = f"{NOTIFICATIONS_KEY_PREFIX}{queue_id}"
+    try:
+        if notification_type:
+            # Remove only specific type
+            all_items = await redis_pubsub.redis.zrange(key, 0, -1)
+            for item in all_items:
+                data = json.loads(item)
+                if data.get("type") == notification_type:
+                    await redis_pubsub.redis.zrem(key, item)
+        else:
+            # Clear all
+            await redis_pubsub.redis.delete(key)
+    except Exception as e:
+        logger.error(f"Error clearing notifications: {e}")
+
+

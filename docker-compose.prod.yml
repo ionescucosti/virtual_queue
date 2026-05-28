@@ -49,6 +49,9 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       RESENDER_API_KEY: ${RESENDER_API_KEY}
       APP_BASE_URL: ${APP_BASE_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+      PUBLIC_URL: ${PUBLIC_URL}
+      ENVIRONMENT: production
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     deploy:
       replicas: 3

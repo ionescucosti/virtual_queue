@@ -5,7 +5,10 @@ from jose import JWTError, jwt
 import os
 
 from app.websocket.manager import manager
-from app.websocket.redis_pubsub import redis_pubsub, publish_to_queue, publish_to_user
+from app.websocket.redis_pubsub import (
+    redis_pubsub, publish_to_queue, publish_to_user,
+    store_notification, clear_notifications
+)
 
 logger = logging.getLogger("virtual_queue")
 
@@ -156,6 +159,9 @@ async def websocket_staff(
                     # Also publish to Redis for cross-instance delivery
                     await publish_to_queue(queue_id, announcement)
 
+                    # Store for HTTP fallback polling
+                    await store_notification(queue_id, announcement)
+
                     logger.info(f"Announcement to queue {queue_id}: {message}")
 
                     await manager.send_to_connection(connection_id, {
@@ -176,6 +182,8 @@ async def websocket_staff(
                     }
                     await manager.broadcast(notification)
                     await publish_to_queue(queue_id, notification)
+                    # Store for HTTP fallback polling
+                    await store_notification(queue_id, notification)
                     logger.info(f"Notification to queue {queue_id}: {message}")
 
             # Handle clearing an active announcement
@@ -188,6 +196,8 @@ async def websocket_staff(
                     }
                     await manager.broadcast(clear_msg)
                     await publish_to_queue(queue_id, clear_msg)
+                    # Clear stored announcements
+                    await clear_notifications(queue_id, "announcement")
                     logger.info(f"Announcement cleared for queue {queue_id}")
 
             # Handle calling specific customer

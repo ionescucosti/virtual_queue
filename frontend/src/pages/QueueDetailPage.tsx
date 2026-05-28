@@ -53,8 +53,6 @@ export function QueueDetailPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [editingMaxBar, setEditingMaxBar] = useState(false)
   const [maxBarInput, setMaxBarInput] = useState('')
-  const [pinnedSelection, setPinnedSelection] = useState<string>('')
-  const [pinnedCustomInput, setPinnedCustomInput] = useState('')
   const [pinnedSelection2, setPinnedSelection2] = useState<string>('')
   const [pinnedCustomInput2, setPinnedCustomInput2] = useState('')
   const [pinnedSaving, setPinnedSaving] = useState(false)
@@ -168,16 +166,6 @@ export function QueueDetailPage() {
   const resolveMessage = (selection: string, customInput: string) =>
     selection === 'custom' ? customInput.trim() : selection
 
-  const handleNotify = async (selection: string, customInput: string) => {
-    if (!queue) return
-    const message = resolveMessage(selection, customInput)
-    if (!message) return
-    try {
-      await apiHelpers.post(`/api/businesses/${businessId}/queues/${queueId}/notify`, { message })
-    } catch (e) {
-      console.error('Error sending notification:', e)
-    }
-  }
 
   const handlePinMessage = async (selection: string, customInput: string) => {
     if (!queue) return
@@ -190,8 +178,6 @@ export function QueueDetailPage() {
         { message }
       )
       setQueue(updated)
-      setPinnedSelection('')
-      setPinnedCustomInput('')
       setPinnedSelection2('')
       setPinnedCustomInput2('')
     } catch (e) {
@@ -415,40 +401,6 @@ export function QueueDetailPage() {
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none text-sm"
               />
             )}
-
-            {/* Row 2 — Notify only */}
-            <div className="flex gap-3 items-center">
-              <select
-                value={pinnedSelection}
-                onChange={e => { setPinnedSelection(e.target.value); setPinnedCustomInput('') }}
-                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm bg-white"
-              >
-                <option value="">— Select a message —</option>
-                {templates.map(t => (
-                  <option key={t.id} value={t.message}>{t.message}</option>
-                ))}
-                <option value="custom">Custom message…</option>
-              </select>
-              <button
-                onClick={() => handleNotify(pinnedSelection, pinnedCustomInput)}
-                disabled={!pinnedSelection || (pinnedSelection === 'custom' && !pinnedCustomInput.trim())}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium flex-shrink-0"
-              >
-                Notify
-              </button>
-            </div>
-            {pinnedSelection === 'custom' && (
-              <input
-                type="text"
-                value={pinnedCustomInput}
-                onChange={e => setPinnedCustomInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleNotify(pinnedSelection, pinnedCustomInput)}
-                placeholder="Type your custom message…"
-                maxLength={500}
-                autoFocus
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
-              />
-            )}
           </div>
 
           {/* Queue management */}
@@ -572,15 +524,7 @@ function QRCodeCard({ businessId, businessName, businessSlug }: { businessId: st
       .catch(() => {})
   }, [])
 
-  const baseUrl = (() => {
-    if (!publicBase) return window.location.origin
-    try {
-      const host = new URL(publicBase).hostname
-      const isPrivate = /^(localhost$|127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/i.test(host)
-      if (isPrivate) return window.location.origin
-    } catch { /* malformed URL */ }
-    return publicBase
-  })()
+  const baseUrl = publicBase ?? window.location.origin
   // Use slug for friendly URL if available, fall back to ID-based URL
   const joinUrl = businessSlug
     ? `${baseUrl}/${businessSlug}`
