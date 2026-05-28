@@ -30,11 +30,12 @@ interface ActiveEntry {
 interface PositionData {
   entry_id: number
   position: number
-  status: 'WAITING' | 'AT_BAR' | 'SERVED' | 'LEFT'
+  status: 'WAITING' | 'AT_BAR' | 'SERVED' | 'SKIPPED' | 'LEFT'
   current_waiting: number
   place_in_line: number
   queue_name: string
   queue_is_active: boolean
+  pinned_message: string | null
 }
 
 interface Announcement {
@@ -42,7 +43,7 @@ interface Announcement {
   message: string
 }
 
-type ViewState = 'loading' | 'browsing' | 'joining' | 'waiting' | 'called' | 'served' | 'error'
+type ViewState = 'loading' | 'browsing' | 'joining' | 'waiting' | 'called' | 'served' | 'skipped' | 'error'
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
 
@@ -94,7 +95,10 @@ const API = '/api/public'
 export function JoinQueuePage() {
   const { businessId, slug } = useParams<{ businessId?: string; slug?: string }>()
   const [bizId, setBizId] = useState<number | null>(businessId ? Number(businessId) : null)
-  const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
+  
+  // Use VITE_WS_URL env var if available, otherwise fall back to current host
+  const WS_BASE = import.meta.env.VITE_WS_URL || 
+    `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
 
   const [view, setView] = useState<ViewState>('loading')
   const [business, setBusiness] = useState<BusinessInfo | null>(null)
@@ -103,8 +107,10 @@ export function JoinQueuePage() {
   const [activeEntry, setActiveEntry] = useState<ActiveEntry | null>(null)
   const [positionData, setPositionData] = useState<PositionData | null>(null)
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
+  const [pinnedMessage, setPinnedMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [leaving, setLeaving] = useState(false)
+  const [wsConnected, setWsConnected] = useState(false)
 
   // Refs for use inside WS closure
   const activeEntryRef = useRef<ActiveEntry | null>(null)
@@ -113,6 +119,7 @@ export function JoinQueuePage() {
   const wsRef = useRef<WebSocket | null>(null)
   const pingRef = useRef<number | null>(null)
   const pollRef = useRef<number | null>(null)
+  const connectRef = useRef<(() => void) | null>(null)
 
   // Keep refs in sync with state
   useEffect(() => { activeEntryRef.current = activeEntry }, [activeEntry])
@@ -160,12 +167,18 @@ export function JoinQueuePage() {
       if (!res.ok) return
       const data: PositionData = await res.json()
       setPositionData(data)
+      setPinnedMessage(data.pinned_message ?? null)
 
       if (data.status === 'SERVED') {
         clearActiveEntry()
         activeEntryRef.current = null
         setActiveEntry(null)
         setView('served')
+      } else if (data.status === 'SKIPPED') {
+        clearActiveEntry()
+        activeEntryRef.current = null
+        setActiveEntry(null)
+        setView('skipped')
       } else if (data.status === 'LEFT') {
         clearActiveEntry()
         activeEntryRef.current = null
@@ -181,97 +194,347 @@ export function JoinQueuePage() {
 
   // ── WebSocket ───────────────────────────────────────────────────────────────
 
+  const subscribeToQueue = useCallback((queueId: number) => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(JSON.stringify({ type: 'subscribe_queue', queue_id: String(queueId) }))
+  }, [])
+
   useEffect(() => {
-    const ws = new WebSocket(`${WS_BASE}/ws/notify`)
-    wsRef.current = ws
+    let reconnectTimer: number | null = null
+    let attempts = 0
+    let destroyed = false
+    let lastPongTime = Date.now()
+    let pongTimeoutRef: number | null = null
 
-    ws.onopen = () => {
-      pingRef.current = window.setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }))
-      }, 30_000)
-    }
+    const connect = () => {
+      if (destroyed) return
+      const wsUrl = `${WS_BASE}/ws/notify`
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data)
-        const qid = Number(msg.queue_id)
+      ws.onopen = () => {
+        attempts = 0
+        lastPongTime = Date.now()
+        setWsConnected(true)
 
-        switch (msg.type) {
-          case 'queue_count_update':
-            setLiveCounts(prev => ({ ...prev, [qid]: msg.current_waiting }))
-            // Also update positionData if this is the customer's queue
-            setPositionData(prev =>
-              prev && activeEntryRef.current?.queueId === qid
-                ? { ...prev, current_waiting: msg.current_waiting }
-                : prev
-            )
-            break
+        // Ping every 15 seconds (more frequent for iOS Safari)
+        pingRef.current = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }))
+            // Start pong timeout - if no pong in 10s, consider connection dead
+            if (pongTimeoutRef) clearTimeout(pongTimeoutRef)
+            pongTimeoutRef = window.setTimeout(() => {
+              const timeSincePong = Date.now() - lastPongTime
+              if (timeSincePong > 20000 && ws.readyState === WebSocket.OPEN) {
+                console.log('[WS] Pong timeout, forcing reconnect')
+                ws.close()
+              }
+            }, 10000)
+          }
+        }, 15000)
 
-          case 'queue_status_update':
-            setLiveStatuses(prev => ({ ...prev, [qid]: msg.is_active }))
-            setPositionData(prev =>
-              prev && activeEntryRef.current?.queueId === qid
-                ? { ...prev, queue_is_active: msg.is_active }
-                : prev
-            )
-            break
+        // Re-subscribe to queue on every (re)connect so server delivers announcements
+        const entry = activeEntryRef.current
+        if (entry) ws.send(JSON.stringify({ type: 'subscribe_queue', queue_id: String(entry.queueId) }))
+      }
 
-          case 'queue_entries_changed': {
-            const entry = activeEntryRef.current
-            if (entry && entry.queueId === qid) fetchPosition(entry)
-            break
+      ws.onerror = () => { /* handled by onclose */ }
+
+      ws.onclose = (event) => {
+        setWsConnected(false)
+        if (pingRef.current) { clearInterval(pingRef.current); pingRef.current = null }
+        if (pongTimeoutRef) { clearTimeout(pongTimeoutRef); pongTimeoutRef = null }
+        if (destroyed || event.code === 1000) return
+        attempts++
+        const delay = Math.min(500 * Math.pow(2, attempts - 1), 30_000)
+        reconnectTimer = window.setTimeout(connect, delay)
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+          const qid = Number(msg.queue_id)
+
+          // Handle pong - update last pong time
+          if (msg.type === 'pong') {
+            lastPongTime = Date.now()
+            if (pongTimeoutRef) { clearTimeout(pongTimeoutRef); pongTimeoutRef = null }
+            return
           }
 
-          case 'business_queues_changed':
-            if (msg.business_id === businessRef.current?.id) fetchBusiness()
-            break
-
-          case 'announcement':
-            if (!msg.queue_id || activeEntryRef.current?.queueId === qid) {
-              setAnnouncements(prev =>
-                [{ id: Date.now().toString(), message: msg.message }, ...prev].slice(0, 4)
+          switch (msg.type) {
+            case 'queue_count_update':
+              setLiveCounts(prev => ({ ...prev, [qid]: msg.current_waiting }))
+              setPositionData(prev =>
+                prev && activeEntryRef.current?.queueId === qid
+                  ? { ...prev, current_waiting: msg.current_waiting }
+                  : prev
               )
-            }
-            break
+              break
 
-          case 'your_turn':
-            setView(v => (v === 'waiting' || v === 'called' ? 'called' : v))
-            if ('vibrate' in navigator) navigator.vibrate([300, 100, 300, 100, 300])
-            break
-        }
-      } catch { /* ignore parse errors */ }
+            case 'queue_status_update':
+              setLiveStatuses(prev => ({ ...prev, [qid]: msg.is_active }))
+              setPositionData(prev =>
+                prev && activeEntryRef.current?.queueId === qid
+                  ? { ...prev, queue_is_active: msg.is_active }
+                  : prev
+              )
+              break
+
+            case 'queue_entries_changed': {
+              const entry = activeEntryRef.current
+              if (entry && entry.queueId === qid) fetchPosition(entry)
+              break
+            }
+
+            case 'business_queues_changed':
+              if (msg.business_id === businessRef.current?.id) fetchBusiness()
+              break
+
+            case 'announcement': {
+              const myQueueId = activeEntryRef.current?.queueId
+              if (!msg.queue_id || Number(msg.queue_id) === myQueueId) {
+                const id = Date.now().toString()
+                setAnnouncements(prev => [{ id, message: msg.message }, ...prev].slice(0, 4))
+                window.setTimeout(() => {
+                  setAnnouncements(prev => prev.filter(a => a.id !== id))
+                }, 30_000)
+              }
+              break
+            }
+
+            case 'notification': {
+              const myQueueId = activeEntryRef.current?.queueId
+              if (!msg.queue_id || Number(msg.queue_id) === myQueueId) {
+                const id = Date.now().toString()
+                setAnnouncements(prev => [{ id, message: msg.message }, ...prev].slice(0, 4))
+                window.setTimeout(() => {
+                  setAnnouncements(prev => prev.filter(a => a.id !== id))
+                }, 5_000)
+              }
+              break
+            }
+
+            case 'announcement_cleared': {
+              const myQueueId = activeEntryRef.current?.queueId
+              if (!msg.queue_id || Number(msg.queue_id) === myQueueId) {
+                setAnnouncements([])
+              }
+              break
+            }
+
+            case 'pinned_message_update': {
+              const myQueueId = activeEntryRef.current?.queueId
+              if (!msg.queue_id || Number(msg.queue_id) === myQueueId) {
+                setPinnedMessage(msg.message ?? null)
+              }
+              break
+            }
+
+            case 'your_turn':
+              setView(v => (v === 'waiting' || v === 'called' ? 'called' : v))
+              if ('vibrate' in navigator) navigator.vibrate([300, 100, 300, 100, 300])
+              break
+          }
+        } catch { /* ignore parse errors */ }
+      }
     }
 
+    // Force reconnect helper
+    const forceReconnect = () => {
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+      const ws = wsRef.current
+      if (ws) {
+        try { ws.close() } catch { /* ignore */ }
+        wsRef.current = null
+      }
+      attempts = 0
+      connect()
+    }
+
+    connectRef.current = connect
+
+    // Network change handlers
+    const handleOnline = () => {
+      console.log('[WS] Network online, reconnecting...')
+      setTimeout(forceReconnect, 1000)
+    }
+    const handleOffline = () => {
+      console.log('[WS] Network offline')
+      setWsConnected(false)
+    }
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+
+    // iOS Safari: handle focus (app switching, tab switching)
+    const handleFocus = () => {
+      console.log('[WS] Window focus, checking connection...')
+      const ws = wsRef.current
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        forceReconnect()
+      } else {
+        // Send immediate ping to verify connection
+        ws.send(JSON.stringify({ type: 'ping' }))
+      }
+      // Also refresh position data
+      if (activeEntryRef.current) fetchPosition(activeEntryRef.current)
+    }
+    window.addEventListener('focus', handleFocus)
+
+    // iOS Safari: handle page show (back-forward cache)
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        console.log('[WS] Page restored from bfcache, reconnecting...')
+        forceReconnect()
+      }
+    }
+    window.addEventListener('pageshow', handlePageShow)
+
+    connect()
+
     return () => {
-      if (pingRef.current) clearInterval(pingRef.current)
-      ws.close(1000)
+      destroyed = true
+      connectRef.current = null
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (pingRef.current) { clearInterval(pingRef.current); pingRef.current = null }
+      if (pongTimeoutRef) { clearTimeout(pongTimeoutRef); pongTimeoutRef = null }
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+      window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('pageshow', handlePageShow)
+      wsRef.current?.close(1000)
+      wsRef.current = null
     }
   }, [fetchPosition, fetchBusiness])
 
-  // Subscribe to queue after WS is open (for targeted announcements)
-  const subscribeToQueue = useCallback((queueId: number) => {
-    const ws = wsRef.current
-    if (!ws) return
-    const doSub = () => ws.send(JSON.stringify({ type: 'subscribe_queue', queue_id: String(queueId) }))
-    if (ws.readyState === WebSocket.OPEN) {
-      doSub()
-    } else {
-      ws.addEventListener('open', doSub, { once: true })
+  // ── Reconnect + refresh when iOS resumes a suspended tab ───────────────────
+
+  useEffect(() => {
+    const handleVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      console.log('[WS] Page became visible, checking connection...')
+      // Refresh position immediately to catch pinned_message changes missed while backgrounded
+      if (activeEntryRef.current) fetchPosition(activeEntryRef.current)
+      // Reconnect WS if iOS killed it in the background
+      const ws = wsRef.current
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        connectRef.current?.()
+      } else if (ws.readyState === WebSocket.OPEN) {
+        // Verify connection is still alive
+        ws.send(JSON.stringify({ type: 'ping' }))
+      }
     }
-  }, [])
+    document.addEventListener('visibilitychange', handleVisible)
+    return () => document.removeEventListener('visibilitychange', handleVisible)
+  }, [fetchPosition])
 
   // ── Periodic position poll (fallback for missed WS events) ─────────────────
+  // Poll more frequently (10s) when WS disconnected, normal (30s) when connected
 
   useEffect(() => {
     if (view !== 'waiting' && view !== 'called') {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
       return
     }
+
+    const pollInterval = wsConnected ? 30_000 : 10_000  // More aggressive when WS is down
+
     pollRef.current = window.setInterval(() => {
       if (activeEntryRef.current) fetchPosition(activeEntryRef.current)
-    }, 30_000)
+    }, pollInterval)
+
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [view, fetchPosition])
+  }, [view, wsConnected, fetchPosition])
+
+  // ── HTTP notification polling (fallback when WebSocket not working) ─────────
+  
+  const lastNotificationTimestamp = useRef(0)
+  const seenNotificationIds = useRef(new Set<string>())
+  
+  useEffect(() => {
+    if (wsConnected || !activeEntry) return  // Only poll when WS is down
+    
+    console.log('[HTTP Poll] Starting notification polling for queue', activeEntry.queueId)
+    
+    const pollNotifications = async () => {
+      try {
+        const url = `${API}/queues/${activeEntry.queueId}/notifications?since=${lastNotificationTimestamp.current}`
+        console.log('[HTTP Poll] Fetching:', url)
+        
+        const res = await fetch(url)
+        if (!res.ok) {
+          console.log('[HTTP Poll] Response not ok:', res.status)
+          return
+        }
+        
+        const data = await res.json()
+        console.log('[HTTP Poll] Received:', data)
+        
+        if (data.notifications.length > 0) {
+          lastNotificationTimestamp.current = data.timestamp
+        }
+        
+        for (const notification of data.notifications) {
+          const myQueueId = activeEntryRef.current?.queueId
+          if (notification.queue_id && Number(notification.queue_id) !== myQueueId) continue
+          
+          const id = notification.timestamp?.toString() || Date.now().toString()
+          
+          // Skip if we've already seen this notification
+          if (seenNotificationIds.current.has(id)) {
+            console.log('[HTTP Poll] Skipping seen notification:', id)
+            continue
+          }
+          seenNotificationIds.current.add(id)
+          
+          console.log('[HTTP Poll] Processing notification:', notification.type, id)
+          
+          switch (notification.type) {
+            case 'announcement': {
+              setAnnouncements(prev => {
+                if (prev.some(a => a.id === id)) return prev
+                const newList = [{ id, message: notification.message }, ...prev].slice(0, 4)
+                // Auto-remove after 30s
+                window.setTimeout(() => {
+                  setAnnouncements(p => p.filter(a => a.id !== id))
+                }, 30_000)
+                return newList
+              })
+              break
+            }
+            case 'notification': {
+              setAnnouncements(prev => {
+                if (prev.some(a => a.id === id)) return prev
+                const newList = [{ id, message: notification.message }, ...prev].slice(0, 4)
+                // Auto-remove after 15s (longer for HTTP polling users)
+                window.setTimeout(() => {
+                  setAnnouncements(p => p.filter(a => a.id !== id))
+                }, 15_000)
+                return newList
+              })
+              break
+            }
+            case 'announcement_cleared':
+              setAnnouncements([])
+              seenNotificationIds.current.clear()  // Allow new announcements
+              break
+          }
+        }
+      } catch (e) {
+        console.log('[HTTP Poll] Error fetching notifications:', e)
+      }
+    }
+    
+    // Poll every 3 seconds when WS is down (for notifications)
+    const interval = window.setInterval(pollNotifications, 3000)
+    pollNotifications()  // Initial fetch
+    
+    return () => {
+      console.log('[HTTP Poll] Stopping notification polling')
+      clearInterval(interval)
+    }
+  }, [wsConnected, activeEntry])
 
   // ── Initial load ────────────────────────────────────────────────────────────
 
@@ -369,6 +632,7 @@ export function JoinQueuePage() {
     activeEntryRef.current = null
     setPositionData(null)
     setAnnouncements([])
+    setPinnedMessage(null)
     setLeaving(false)
     setView('browsing')
   }
@@ -445,14 +709,17 @@ export function JoinQueuePage() {
                   <p className="text-gray-500 text-sm">All queues are currently closed. Please check back soon or ask a staff member.</p>
                 </div>
               ) : (
-                <>
+                  <>
                   <div className="flex items-center justify-between px-1 mb-1">
                     <h2 className="text-white font-semibold text-base">
                       {activeQueues.length > 0
                         ? `${activeQueues.length} queue${activeQueues.length !== 1 ? 's' : ''} open`
                         : 'No queues open right now'}
                     </h2>
-                    <span className="text-blue-200 text-xs">Live updates</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`inline-block w-2 h-2 rounded-full ${wsConnected ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'}`} />
+                      <span className="text-blue-200 text-xs">{wsConnected ? 'Live' : 'Reconnecting...'}</span>
+                    </div>
                   </div>
 
                   {activeQueues.map(queue => (
@@ -486,6 +753,14 @@ export function JoinQueuePage() {
           {/* ── WAITING ─────────────────────────────────────────────────── */}
           {(view === 'waiting' || view === 'called') && positionData && (
             <div className="space-y-3">
+              {/* Pinned message — persistent until staff removes it */}
+              {pinnedMessage && (
+                <div className="bg-amber-50 border border-amber-400 rounded-xl px-4 py-3 flex gap-2 items-start">
+                  <span className="text-lg flex-shrink-0">📌</span>
+                  <p className="text-amber-900 text-sm font-medium">{pinnedMessage}</p>
+                </div>
+              )}
+
               {/* Announcements */}
               {announcements.map(a => (
                 <div
@@ -512,14 +787,6 @@ export function JoinQueuePage() {
                 </div>
               )}
 
-              {/* Queue deactivated warning */}
-              {!positionData.queue_is_active && view === 'waiting' && (
-                <div className="bg-orange-50 border border-orange-300 rounded-xl px-4 py-3">
-                  <p className="text-orange-800 text-sm font-medium">
-                    ⚠️ This queue has been paused. Staff will reopen it shortly.
-                  </p>
-                </div>
-              )}
 
               {/* Main position card */}
               <div className="bg-white rounded-2xl shadow-xl p-6 text-center">
@@ -550,10 +817,16 @@ export function JoinQueuePage() {
                 )}
               </div>
 
-              {/* Ticket info */}
+              {/* Ticket info + connection status */}
               <div className="bg-white/20 backdrop-blur-sm rounded-xl px-4 py-3 flex justify-between items-center">
-                <span className="text-blue-100 text-xs">Ticket #</span>
-                <span className="text-white font-mono font-bold text-sm">{positionData.position}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-blue-100 text-xs">Ticket #</span>
+                  <span className="text-white font-mono font-bold text-sm">{positionData.position}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className={`inline-block w-2 h-2 rounded-full ${wsConnected ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'}`} />
+                  <span className="text-blue-200 text-xs">{wsConnected ? 'Live' : 'Updating...'}</span>
+                </div>
               </div>
 
               {/* Leave button */}
@@ -577,11 +850,34 @@ export function JoinQueuePage() {
                 onClick={() => {
                   setPositionData(null)
                   setAnnouncements([])
+                  setPinnedMessage(null)
                   setView('browsing')
                 }}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors text-sm"
               >
                 Back to Queues
+              </button>
+            </div>
+          )}
+
+          {/* ── SKIPPED ─────────────────────────────────────────────────── */}
+          {view === 'skipped' && (
+            <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
+              <div className="text-5xl mb-4">⏭️</div>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">You were skipped</h2>
+              <p className="text-gray-500 text-sm mb-6">
+                You weren't available when called. You can rejoin the queue if you'd like.
+              </p>
+              <button
+                onClick={() => {
+                  setPositionData(null)
+                  setAnnouncements([])
+                  setPinnedMessage(null)
+                  setView('browsing')
+                }}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+              >
+                Rejoin Queue
               </button>
             </div>
           )}

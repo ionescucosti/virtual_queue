@@ -65,7 +65,7 @@ class ConnectionManager:
                 self.user_connections[user_id] = set()
             self.user_connections[user_id].add(connection_id)
 
-        logger.info(f"WebSocket connected: {connection_id} (user={user_id}, queue={queue_id})")
+        logger.info(f"WebSocket connected: {connection_id} (user={user_id}, queue={queue_id}, role={role}). Total connections: {len(self.active_connections)}")
         return connection_id
 
     async def disconnect(self, connection_id: str):
@@ -116,11 +116,17 @@ class ConnectionManager:
 
     async def broadcast(self, message: dict):
         """Send a message to all active connections."""
+        connection_ids = list(self.active_connections.keys())
+        logger.info(f"Broadcasting message type={message.get('type')} to {len(connection_ids)} connections: {connection_ids}")
         tasks = []
-        for connection_id in list(self.active_connections.keys()):
+        for connection_id in connection_ids:
             tasks.append(self.send_to_connection(connection_id, message))
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Log any errors
+            for conn_id, result in zip(connection_ids, results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error sending to {conn_id}: {result}")
 
     def get_queue_connection_count(self, queue_id: str) -> int:
         """Get the number of connections in a queue."""

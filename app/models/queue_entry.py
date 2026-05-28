@@ -8,7 +8,8 @@ class EntryStatus(str, enum.Enum):
     WAITING = "WAITING"    # joined, waiting in line
     AT_BAR = "AT_BAR"      # called to the physical bar
     SERVED = "SERVED"      # completed / order taken
-    LEFT = "LEFT"          # abandoned before being served
+    SKIPPED = "SKIPPED"    # didn't show up when called, skipped by staff
+    LEFT = "LEFT"          # abandoned before being served (left by customer)
 
 
 class QueueEntry(Base):
@@ -31,6 +32,7 @@ class QueueEntry(Base):
     joined_at = Column(DateTime(timezone=True), nullable=False)
     called_at = Column(DateTime(timezone=True), nullable=True)   # moved to AT_BAR
     served_at = Column(DateTime(timezone=True), nullable=True)   # marked SERVED
+    skipped_at = Column(DateTime(timezone=True), nullable=True)  # marked SKIPPED
     left_at = Column(DateTime(timezone=True), nullable=True)     # marked LEFT
 
     session = relationship("QueueSession", back_populates="entries")

@@ -37,6 +37,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',  // Listen on all network interfaces (allows access via local IP)
     port: 3000,
+    allowedHosts: ['.trycloudflare.com'],  // Allow cloudflared tunnel hosts
     proxy: {
       '/api': {
         target: process.env.API_PROXY_TARGET || 'http://localhost:8000',
@@ -47,8 +48,9 @@ export default defineConfig({
         changeOrigin: true
       },
       '/ws': {
-        target: (process.env.API_PROXY_TARGET || 'http://localhost:8000').replace('http', 'ws'),
-        ws: true
+        target: process.env.API_PROXY_TARGET || 'http://localhost:8000',
+        ws: true,
+        changeOrigin: true
       }
     }
   }

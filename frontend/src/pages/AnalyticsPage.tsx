@@ -17,6 +17,7 @@ interface DaySession {
   date: string
   total_joined: number
   served: number
+  skipped: number
   abandoned: number
   abandonment_rate: number
   avg_wait_minutes: number | null
@@ -61,6 +62,7 @@ function KpiCard({ label, value, sub, color }: {
     red:    'bg-red-50 text-red-600',
     purple: 'bg-purple-50 text-purple-600',
     orange: 'bg-orange-50 text-orange-600',
+    yellow: 'bg-yellow-50 text-yellow-600',
   }
   return (
     <div className={`rounded-xl p-5 ${colors[color]}`}>
@@ -137,11 +139,12 @@ export function AnalyticsPage() {
     if (!sessions.length) return null
     const total    = sessions.reduce((s, d) => s + d.total_joined, 0)
     const served   = sessions.reduce((s, d) => s + d.served, 0)
+    const skipped  = sessions.reduce((s, d) => s + d.skipped, 0)
     const abandoned = sessions.reduce((s, d) => s + d.abandoned, 0)
     const waitTimes = sessions.filter(d => d.avg_wait_minutes !== null).map(d => d.avg_wait_minutes!)
     const avgWait  = waitTimes.length ? Math.round(waitTimes.reduce((a, b) => a + b) / waitTimes.length) : null
     const abandonRate = total > 0 ? Math.round((abandoned / total) * 100) : 0
-    return { total, served, abandoned, avgWait, abandonRate }
+    return { total, served, skipped, abandoned, avgWait, abandonRate }
   }, [sessions])
 
   // Daily trend data
@@ -150,6 +153,7 @@ export function AnalyticsPage() {
       date: formatDate(s.date),
       Joined: s.total_joined,
       Served: s.served,
+      Skipped: s.skipped,
       Abandoned: s.abandoned,
     })),
   [sessions])
@@ -253,10 +257,11 @@ export function AnalyticsPage() {
               <>
                 {/* KPI cards */}
                 {kpis && (
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
                     <KpiCard label="Total customers"   value={kpis.total}                              color="blue"   />
                     <KpiCard label="Served"            value={kpis.served}                             color="green"  />
-                    <KpiCard label="Abandoned"         value={kpis.abandoned}                          color="red"    />
+                    <KpiCard label="Skipped"           value={kpis.skipped}                            color="yellow" />
+                    <KpiCard label="Left early"        value={kpis.abandoned}                          color="red"    />
                     <KpiCard label="Abandonment rate"  value={`${kpis.abandonRate}%`}                  color="orange" />
                     <KpiCard
                       label="Avg wait to bar"
@@ -293,8 +298,9 @@ export function AnalyticsPage() {
                         <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
                         <Tooltip />
                         <Legend />
-                        <Line type="monotone" dataKey="Joined"   stroke="#3b82f6" strokeWidth={2} dot={false} />
-                        <Line type="monotone" dataKey="Served"   stroke="#22c55e" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="Joined"    stroke="#3b82f6" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="Served"    stroke="#22c55e" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="Skipped"   stroke="#eab308" strokeWidth={2} dot={false} />
                         <Line type="monotone" dataKey="Abandoned" stroke="#ef4444" strokeWidth={2} dot={false} />
                       </LineChart>
                     </ResponsiveContainer>
@@ -329,7 +335,8 @@ export function AnalyticsPage() {
                           <th className="px-4 py-2 text-left font-medium text-gray-600">Date</th>
                           <th className="px-4 py-2 text-right font-medium text-gray-600">Joined</th>
                           <th className="px-4 py-2 text-right font-medium text-gray-600">Served</th>
-                          <th className="px-4 py-2 text-right font-medium text-gray-600">Abandoned</th>
+                          <th className="px-4 py-2 text-right font-medium text-gray-600">Skipped</th>
+                          <th className="px-4 py-2 text-right font-medium text-gray-600">Left early</th>
                           <th className="px-4 py-2 text-right font-medium text-gray-600">Abandon %</th>
                           <th className="px-4 py-2 text-right font-medium text-gray-600">Avg wait</th>
                           <th className="px-4 py-2 text-right font-medium text-gray-600">Peak hour</th>
@@ -341,6 +348,7 @@ export function AnalyticsPage() {
                             <td className="px-4 py-2 text-gray-900 font-medium">{formatDate(s.date)}</td>
                             <td className="px-4 py-2 text-right text-gray-700">{s.total_joined}</td>
                             <td className="px-4 py-2 text-right text-green-600">{s.served}</td>
+                            <td className="px-4 py-2 text-right text-yellow-600">{s.skipped}</td>
                             <td className="px-4 py-2 text-right text-red-500">{s.abandoned}</td>
                             <td className="px-4 py-2 text-right">
                               <span className={`text-xs px-2 py-0.5 rounded-full ${
