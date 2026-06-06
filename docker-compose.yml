@@ -92,11 +92,12 @@ services:
   # The tunnel URL is written to a shared volume and auto-discovered by the API.
   # Get the current URL: curl localhost:8000/api/public/config
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cloudflared
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "/scripts/cloudflared_wrapper.sh", "http://frontend:3000"]
+    command: ["http://frontend:3000"]
     volumes:
-      - ./scripts/cloudflared_wrapper.sh:/scripts/cloudflared_wrapper.sh:ro
       - tunnel_data:/shared
     depends_on:
       - frontend

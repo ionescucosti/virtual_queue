@@ -1,0 +1,7 @@
+FROM cloudflare/cloudflared:latest AS cloudflared-bin
+FROM alpine:3.19
+RUN apk add --no-cache grep
+COPY --from=cloudflared-bin /usr/local/bin/cloudflared /usr/local/bin/cloudflared
+COPY scripts/cloudflared_wrapper.sh /cloudflared_wrapper.sh
+RUN chmod +x /cloudflared_wrapper.sh
+ENTRYPOINT ["/cloudflared_wrapper.sh"]
