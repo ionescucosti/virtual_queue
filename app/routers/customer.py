@@ -1,8 +1,5 @@
 import hashlib
-import json
 import os
-import urllib.request
-import urllib.error
 from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import func
@@ -300,35 +297,18 @@ def get_my_position(
 
 @router.get("/config")
 def get_public_config():
-    """
-    Returns the public-facing base URL for customer QR codes.
-
-    Priority depends on ENVIRONMENT:
-      - development (default): cloudflared auto-discovery first, then PUBLIC_URL fallback
-      - production: PUBLIC_URL only (cloudflared not used)
-    """
-    environment = os.getenv("ENVIRONMENT", "development").lower()
-    public_url = os.getenv("PUBLIC_URL", "").strip()
-
-    if environment == "production":
-        # Production: use PUBLIC_URL from .env (required for stable domains)
-        if public_url:
-            return {"public_url": public_url.rstrip("/"), "source": "env"}
-        return {"public_url": None, "source": "none"}
-
-    # Development: auto-discover from cloudflared tunnel first
+    """Returns the public-facing base URL for customer QR codes."""
+    # Try URL written by cloudflared wrapper script to shared volume
     try:
-        with urllib.request.urlopen("http://cloudflared:8080/quicktunnel", timeout=2) as resp:
-            data = json.loads(resp.read())
-            url = data.get("url") or data.get("hostname")
-            if url:
-                if not url.startswith("http"):
-                    url = f"https://{url}"
-                return {"public_url": url, "source": "cloudflared"}
+        with open("/shared/tunnel_url") as f:
+            url = f.read().strip()
+        if url:
+            return {"public_url": url, "source": "cloudflared"}
     except Exception:
         pass
 
-    # Fallback to PUBLIC_URL if cloudflared is not available
+    # Fallback to PUBLIC_URL env var (for custom domains or non-Docker setups)
+    public_url = os.getenv("PUBLIC_URL", "").strip()
     if public_url:
         return {"public_url": public_url.rstrip("/"), "source": "env"}
 
