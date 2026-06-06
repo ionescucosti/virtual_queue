@@ -553,8 +553,14 @@ function QRCodeCard({ businessId, businessName, businessSlug }: { businessId: st
     try {
       await navigator.clipboard.writeText(joinUrl)
     } catch {
-      prompt('Copy this link:', joinUrl)
-      return
+      const el = document.createElement('textarea')
+      el.value = joinUrl
+      el.style.position = 'fixed'
+      el.style.opacity = '0'
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
     }
     setCopied(true)
     if (copiedTimer.current) clearTimeout(copiedTimer.current)
