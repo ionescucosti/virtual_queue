@@ -37,7 +37,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',  // Listen on all network interfaces (allows access via local IP)
     port: 3000,
-    allowedHosts: 'all',
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: process.env.API_PROXY_TARGET || 'http://localhost:8000',
