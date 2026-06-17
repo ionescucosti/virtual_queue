@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import { type Language } from '../i18n/translations'
 
 export interface User {
   id: number
@@ -136,6 +137,24 @@ export const useWebSocketStore = create<WebSocketState>((set) => ({
     queueEntriesVersion: { ...state.queueEntriesVersion, [queueId]: (state.queueEntriesVersion[queueId] ?? 0) + 1 }
   })),
 }))
+
+interface LanguageState {
+  language: Language
+  setLanguage: (lang: Language) => void
+}
+
+export const useLanguageStore = create<LanguageState>()(
+  persist(
+    (set) => ({
+      language: 'ro' as Language,
+      setLanguage: (language) => set({ language }),
+    }),
+    {
+      name: 'vq-language',
+      storage: createJSONStorage(() => localStorage),
+    }
+  )
+)
 
 // Helper function to play notification sound
 function playNotificationSound() {
