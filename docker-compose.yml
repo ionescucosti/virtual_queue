@@ -42,8 +42,6 @@ services:
       retries: 5
 
   # FastAPI Backend
-  # DEV: exposed on :8000 for direct API testing, Swagger UI
-  # PROD: internal only (accessed via nginx)
   api:
     build: .
     restart: always
@@ -64,12 +62,12 @@ services:
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8000}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       PUBLIC_URL: ${PUBLIC_URL:-}
-      ENVIRONMENT: development
       LOG_LEVEL: INFO
     ports:
-      - "8000:8000"  # Remove in production
+      - "8000:8000"
     volumes:
       - ./app:/app/app
+      - tunnel_data:/shared
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   # React Frontend (development with hot-reload)
@@ -90,19 +88,19 @@ services:
       - /app/node_modules
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
 
-  # Cloudflare Tunnel — exposes the app publicly without port-forwarding.
-  # Creates a free HTTPS tunnel to http://frontend:3000 (Vite dev proxy handles /api and /ws).
-  # Usage: docker compose --profile tunnel up
-  # The PUBLIC_URL is auto-discovered via cloudflared metrics API - no manual config needed!
+  # Cloudflare Tunnel — exposes the app publicly via HTTPS without port-forwarding.
+  # The tunnel URL is written to a shared volume and auto-discovered by the API.
   # Get the current URL: curl localhost:8000/api/public/config
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cloudflared
     restart: unless-stopped
-    command: tunnel --no-autoupdate --metrics 0.0.0.0:8080 --url http://frontend:3000
+    command: ["http://frontend:3000"]
+    volumes:
+      - tunnel_data:/shared
     depends_on:
       - frontend
-    profiles:
-      - tunnel
 
   # Nginx Reverse Proxy (optional in dev, required in prod)
   # Use: docker compose --profile full up
@@ -122,3 +120,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  tunnel_data:

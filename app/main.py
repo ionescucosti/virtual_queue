@@ -59,6 +59,9 @@ async def lifespan(app: FastAPI):
         conn.execute(text(
             'ALTER TABLE queue_entry ADD COLUMN IF NOT EXISTS skipped_at TIMESTAMP WITH TIME ZONE'
         ))
+        conn.execute(text(
+            'ALTER TABLE queue ADD COLUMN IF NOT EXISTS pinned_message VARCHAR'
+        ))
         # Rename legacy OWNER role to MANAGER (cast to text to bypass enum check)
         conn.execute(text(
             "UPDATE \"user\" SET role = 'MANAGER' WHERE role::text = 'OWNER'"
