@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
+import { useLanguageStore } from '../store'
+import { translate, LANGUAGES } from '../i18n/translations'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -90,15 +92,68 @@ function clearActiveEntry() {
 
 const API = '/api/public'
 
+// ── Language Selector ─────────────────────────────────────────────────────────
+
+function LanguageSelector() {
+  const { language, setLanguage } = useLanguageStore()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const current = LANGUAGES.find(l => l.code === language)
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1 bg-white/15 hover:bg-white/25 active:bg-white/30 rounded-lg px-2.5 py-1.5 text-xs text-white font-medium transition-colors"
+        aria-label="Select language"
+      >
+        <span>{current?.flag}</span>
+        <span>{language.toUpperCase()}</span>
+        <span className="text-white/60 text-[10px]">▾</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1.5 bg-white rounded-xl shadow-2xl py-1 z-50 min-w-[130px] border border-gray-100">
+          {LANGUAGES.map(lang => (
+            <button
+              key={lang.code}
+              onClick={() => { setLanguage(lang.code); setOpen(false) }}
+              className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2.5 hover:bg-gray-50 transition-colors ${
+                language === lang.code ? 'font-semibold text-blue-600' : 'text-gray-700'
+              }`}
+            >
+              <span>{lang.flag}</span>
+              <span>{lang.label}</span>
+              {language === lang.code && <span className="ml-auto text-blue-500 text-xs">✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function JoinQueuePage() {
   const { businessId, slug } = useParams<{ businessId?: string; slug?: string }>()
   const [bizId, setBizId] = useState<number | null>(businessId ? Number(businessId) : null)
-  
+
   // Use VITE_WS_URL env var if available, otherwise fall back to current host
-  const WS_BASE = import.meta.env.VITE_WS_URL || 
+  const WS_BASE = import.meta.env.VITE_WS_URL ||
     `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
+
+  const { language } = useLanguageStore()
+  const t = (key: string, vars?: Record<string, string | number>) => translate(language, key, vars)
 
   const [view, setView] = useState<ViewState>('loading')
   const [business, setBusiness] = useState<BusinessInfo | null>(null)
@@ -108,7 +163,7 @@ export function JoinQueuePage() {
   const [positionData, setPositionData] = useState<PositionData | null>(null)
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [pinnedMessage, setPinnedMessage] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [errorKey, setErrorKey] = useState<string | null>(null)
   const [leaving, setLeaving] = useState(false)
   const [wsConnected, setWsConnected] = useState(false)
 
@@ -448,48 +503,48 @@ export function JoinQueuePage() {
   }, [view, wsConnected, fetchPosition])
 
   // ── HTTP notification polling (fallback when WebSocket not working) ─────────
-  
+
   const lastNotificationTimestamp = useRef(0)
   const seenNotificationIds = useRef(new Set<string>())
-  
+
   useEffect(() => {
     if (wsConnected || !activeEntry) return  // Only poll when WS is down
-    
+
     console.log('[HTTP Poll] Starting notification polling for queue', activeEntry.queueId)
-    
+
     const pollNotifications = async () => {
       try {
         const url = `${API}/queues/${activeEntry.queueId}/notifications?since=${lastNotificationTimestamp.current}`
         console.log('[HTTP Poll] Fetching:', url)
-        
+
         const res = await fetch(url)
         if (!res.ok) {
           console.log('[HTTP Poll] Response not ok:', res.status)
           return
         }
-        
+
         const data = await res.json()
         console.log('[HTTP Poll] Received:', data)
-        
+
         if (data.notifications.length > 0) {
           lastNotificationTimestamp.current = data.timestamp
         }
-        
+
         for (const notification of data.notifications) {
           const myQueueId = activeEntryRef.current?.queueId
           if (notification.queue_id && Number(notification.queue_id) !== myQueueId) continue
-          
+
           const id = notification.timestamp?.toString() || Date.now().toString()
-          
+
           // Skip if we've already seen this notification
           if (seenNotificationIds.current.has(id)) {
             console.log('[HTTP Poll] Skipping seen notification:', id)
             continue
           }
           seenNotificationIds.current.add(id)
-          
+
           console.log('[HTTP Poll] Processing notification:', notification.type, id)
-          
+
           switch (notification.type) {
             case 'announcement': {
               setAnnouncements(prev => {
@@ -525,11 +580,11 @@ export function JoinQueuePage() {
         console.log('[HTTP Poll] Error fetching notifications:', e)
       }
     }
-    
+
     // Poll every 3 seconds when WS is down (for notifications)
     const interval = window.setInterval(pollNotifications, 3000)
     pollNotifications()  // Initial fetch
-    
+
     return () => {
       console.log('[HTTP Poll] Stopping notification polling')
       clearInterval(interval)
@@ -569,7 +624,7 @@ export function JoinQueuePage() {
           setView('browsing')
         }
       } catch {
-        setError('Could not load business information. Please scan the QR code again.')
+        setErrorKey('could_not_load')
         setView('error')
       }
     })()
@@ -579,7 +634,7 @@ export function JoinQueuePage() {
 
   const joinQueue = async (queueId: number) => {
     if (!bizId) return
-    setError(null)
+    setErrorKey(null)
     setView('joining')
     try {
       const res = await fetch(`${API}/businesses/${bizId}/queues/${queueId}/join`, {
@@ -588,10 +643,7 @@ export function JoinQueuePage() {
         body: JSON.stringify({ customer_token: deviceToken.current }),
       })
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        setError(res.status === 409
-          ? 'You are already in a queue at this location.'
-          : body.detail || 'Failed to join. Please try again.')
+        setErrorKey(res.status === 409 ? 'already_in_queue' : 'failed_to_join')
         setView('browsing')
         return
       }
@@ -609,7 +661,7 @@ export function JoinQueuePage() {
       await fetchPosition(entry)
       setView('waiting')
     } catch {
-      setError('Network error. Please try again.')
+      setErrorKey('network_error')
       setView('browsing')
     }
   }
@@ -618,7 +670,7 @@ export function JoinQueuePage() {
 
   const leaveQueue = async () => {
     if (!activeEntry || leaving) return
-    if (!window.confirm('Leave the queue? You will lose your place.')) return
+    if (!window.confirm(t('leave_confirm'))) return
     setLeaving(true)
     try {
       await fetch(`${API}/businesses/${activeEntry.businessId}/queues/${activeEntry.queueId}/leave`, {
@@ -651,15 +703,19 @@ export function JoinQueuePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-800 flex flex-col">
       {/* Header */}
-      <div className="bg-white/10 backdrop-blur-sm px-4 py-4 text-white text-center">
+      <div className="bg-white/10 backdrop-blur-sm px-4 py-4 text-white text-center relative">
+        <div className="absolute top-3 right-3">
+          <LanguageSelector />
+        </div>
+
         {business ? (
           <>
-            <p className="text-xs uppercase tracking-widest text-blue-100 mb-0.5">Virtual Queue</p>
+            <p className="text-xs uppercase tracking-widest text-blue-100 mb-0.5">{t('virtual_queue')}</p>
             <h1 className="text-xl font-bold">{business.name}</h1>
             <p className="text-xs text-blue-200 mt-0.5">{business.address}</p>
           </>
         ) : (
-          <h1 className="text-xl font-bold">Virtual Queue</h1>
+          <h1 className="text-xl font-bold">{t('virtual_queue')}</h1>
         )}
       </div>
 
@@ -671,7 +727,7 @@ export function JoinQueuePage() {
           {view === 'loading' && (
             <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
               <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-              <p className="text-gray-500 text-sm">Loading…</p>
+              <p className="text-gray-500 text-sm">{t('loading')}</p>
             </div>
           )}
 
@@ -679,8 +735,8 @@ export function JoinQueuePage() {
           {view === 'error' && (
             <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
               <div className="text-4xl mb-3">⚠️</div>
-              <h2 className="text-lg font-semibold text-gray-900 mb-2">Something went wrong</h2>
-              <p className="text-gray-500 text-sm">{error}</p>
+              <h2 className="text-lg font-semibold text-gray-900 mb-2">{t('something_went_wrong')}</h2>
+              <p className="text-gray-500 text-sm">{errorKey ? t(errorKey) : ''}</p>
             </div>
           )}
 
@@ -688,37 +744,39 @@ export function JoinQueuePage() {
           {view === 'joining' && (
             <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
               <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-              <p className="text-gray-600 font-medium">Joining queue…</p>
+              <p className="text-gray-600 font-medium">{t('joining_queue')}</p>
             </div>
           )}
 
           {/* ── BROWSING — queue selection ───────────────────────────────── */}
           {view === 'browsing' && (
             <div className="space-y-3">
-              {error && (
+              {errorKey && (
                 <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
-                  {error}
-                  <button className="ml-2 underline" onClick={() => setError(null)}>Dismiss</button>
+                  {t(errorKey)}
+                  <button className="ml-2 underline" onClick={() => setErrorKey(null)}>{t('dismiss')}</button>
                 </div>
               )}
 
               {activeQueues.length === 0 ? (
                 <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
                   <div className="text-4xl mb-3">🚫</div>
-                  <h2 className="text-lg font-semibold text-gray-900 mb-1">No queues open</h2>
-                  <p className="text-gray-500 text-sm">All queues are currently closed. Please check back soon or ask a staff member.</p>
+                  <h2 className="text-lg font-semibold text-gray-900 mb-1">{t('no_queues_open')}</h2>
+                  <p className="text-gray-500 text-sm">{t('no_queues_message')}</p>
                 </div>
               ) : (
-                  <>
+                <>
                   <div className="flex items-center justify-between px-1 mb-1">
                     <h2 className="text-white font-semibold text-base">
                       {activeQueues.length > 0
-                        ? `${activeQueues.length} queue${activeQueues.length !== 1 ? 's' : ''} open`
-                        : 'No queues open right now'}
+                        ? activeQueues.length === 1
+                          ? t('queues_open_one')
+                          : t('queues_open_many', { count: activeQueues.length })
+                        : t('no_queues_open_right_now')}
                     </h2>
                     <div className="flex items-center gap-1.5">
                       <span className={`inline-block w-2 h-2 rounded-full ${wsConnected ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'}`} />
-                      <span className="text-blue-200 text-xs">{wsConnected ? 'Live' : 'Reconnecting...'}</span>
+                      <span className="text-blue-200 text-xs">{wsConnected ? t('live') : t('reconnecting')}</span>
                     </div>
                   </div>
 
@@ -729,19 +787,19 @@ export function JoinQueuePage() {
                           <h3 className="font-bold text-gray-900 text-base">{queue.name}</h3>
                           <div className="flex items-center gap-1.5 mt-1">
                             <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
-                            <span className="text-xs text-gray-500">Open</span>
+                            <span className="text-xs text-gray-500">{t('open')}</span>
                           </div>
                         </div>
                         <div className="text-right">
                           <span className="text-2xl font-bold text-blue-600">{queue.current_waiting}</span>
-                          <p className="text-xs text-gray-400 leading-tight">waiting</p>
+                          <p className="text-xs text-gray-400 leading-tight">{t('waiting')}</p>
                         </div>
                       </div>
                       <button
                         onClick={() => joinQueue(queue.id)}
                         className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm"
                       >
-                        Join Queue
+                        {t('join_queue')}
                       </button>
                     </div>
                   ))}
@@ -782,11 +840,10 @@ export function JoinQueuePage() {
               {view === 'called' && (
                 <div className="bg-green-500 rounded-2xl shadow-xl p-5 text-center text-white">
                   <div className="text-4xl mb-2">🎉</div>
-                  <h2 className="text-xl font-bold">It's your turn!</h2>
-                  <p className="text-green-100 text-sm mt-1">Please proceed to the counter.</p>
+                  <h2 className="text-xl font-bold">{t('its_your_turn')}</h2>
+                  <p className="text-green-100 text-sm mt-1">{t('proceed_to_counter')}</p>
                 </div>
               )}
-
 
               {/* Main position card */}
               <div className="bg-white rounded-2xl shadow-xl p-6 text-center">
@@ -794,25 +851,18 @@ export function JoinQueuePage() {
 
                 {view === 'waiting' ? (
                   <>
-                    <p className="text-sm text-gray-500 mb-1">Your position</p>
+                    <p className="text-sm text-gray-500 mb-1">{t('your_position')}</p>
                     <div className="text-7xl font-extrabold text-blue-600 leading-none my-3">
                       #{positionData.place_in_line}
                     </div>
-                    <p className="text-sm text-gray-500">
-                      {positionData.current_waiting > 1
-                        ? `${positionData.current_waiting} people in queue`
-                        : positionData.current_waiting === 1
-                        ? '1 person in queue'
-                        : 'Queue is empty'}
-                    </p>
                   </>
                 ) : (
                   <>
-                    <p className="text-sm text-gray-500 mb-1">Queue number</p>
+                    <p className="text-sm text-gray-500 mb-1">{t('queue_number')}</p>
                     <div className="text-7xl font-extrabold text-green-500 leading-none my-3">
                       #{positionData.position}
                     </div>
-                    <p className="text-sm text-gray-400">You've been called — go ahead!</p>
+                    <p className="text-sm text-gray-400">{t('youve_been_called')}</p>
                   </>
                 )}
               </div>
@@ -820,12 +870,12 @@ export function JoinQueuePage() {
               {/* Ticket info + connection status */}
               <div className="bg-white/20 backdrop-blur-sm rounded-xl px-4 py-3 flex justify-between items-center">
                 <div className="flex items-center gap-2">
-                  <span className="text-blue-100 text-xs">Ticket #</span>
+                  <span className="text-blue-100 text-xs">{t('ticket')}</span>
                   <span className="text-white font-mono font-bold text-sm">{positionData.position}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className={`inline-block w-2 h-2 rounded-full ${wsConnected ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'}`} />
-                  <span className="text-blue-200 text-xs">{wsConnected ? 'Live' : 'Updating...'}</span>
+                  <span className="text-blue-200 text-xs">{wsConnected ? t('live') : t('updating')}</span>
                 </div>
               </div>
 
@@ -835,7 +885,7 @@ export function JoinQueuePage() {
                 disabled={leaving}
                 className="w-full bg-white/10 hover:bg-white/20 active:bg-white/30 text-white border border-white/30 font-medium py-3 rounded-xl transition-colors text-sm disabled:opacity-50"
               >
-                {leaving ? 'Leaving…' : 'Leave Queue'}
+                {leaving ? t('leaving') : t('leave_queue')}
               </button>
             </div>
           )}
@@ -844,8 +894,8 @@ export function JoinQueuePage() {
           {view === 'served' && (
             <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
               <div className="text-5xl mb-4">✅</div>
-              <h2 className="text-xl font-bold text-gray-900 mb-2">All done!</h2>
-              <p className="text-gray-500 text-sm mb-6">Thank you for visiting {business?.name}.</p>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">{t('all_done')}</h2>
+              <p className="text-gray-500 text-sm mb-6">{t('thank_you', { name: business?.name ?? '' })}</p>
               <button
                 onClick={() => {
                   setPositionData(null)
@@ -855,7 +905,7 @@ export function JoinQueuePage() {
                 }}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors text-sm"
               >
-                Back to Queues
+                {t('back_to_queues')}
               </button>
             </div>
           )}
@@ -864,10 +914,8 @@ export function JoinQueuePage() {
           {view === 'skipped' && (
             <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
               <div className="text-5xl mb-4">⏭️</div>
-              <h2 className="text-xl font-bold text-gray-900 mb-2">You were skipped</h2>
-              <p className="text-gray-500 text-sm mb-6">
-                You weren't available when called. You can rejoin the queue if you'd like.
-              </p>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">{t('you_were_skipped')}</h2>
+              <p className="text-gray-500 text-sm mb-6">{t('skipped_message')}</p>
               <button
                 onClick={() => {
                   setPositionData(null)
@@ -877,7 +925,7 @@ export function JoinQueuePage() {
                 }}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors text-sm"
               >
-                Rejoin Queue
+                {t('rejoin_queue')}
               </button>
             </div>
           )}
@@ -887,7 +935,7 @@ export function JoinQueuePage() {
 
       {/* Footer */}
       <div className="text-center pb-6 pt-2">
-        <p className="text-blue-200/60 text-xs">Powered by Virtual Queue</p>
+        <p className="text-blue-200/60 text-xs">{t('powered_by')}</p>
       </div>
     </div>
   )
